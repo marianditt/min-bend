@@ -46,9 +46,13 @@ export function nextDisplayedScale(e: EaseInput): EaseResult {
   return { scale, phase: e.phase }
 }
 
+export function fitPadding(width: number, height: number): number {
+  return Math.max(8, Math.min(width, height) * 0.02)
+}
+
 /** Equal-scale, centered fit of the bounds into the canvas with padding. */
 export function fitScale(bounds: Bounds, width: number, height: number): number {
-  const pad = Math.max(22, Math.min(width, height) * 0.09)
+  const pad = fitPadding(width, height)
   const availW = Math.max(width - 2 * pad, 1)
   const availH = Math.max(height - 2 * pad, 1)
   const spanX = Math.max(bounds.maxX - bounds.minX, 1e-9)

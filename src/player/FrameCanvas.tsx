@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FrameSet, Vec2 } from '../solver/types'
-import { boundsForScale, fitScale, nextDisplayedScale, type Bounds, type EasePhase } from './scaleEase'
+import { boundsForScale, fitPadding, fitScale, nextDisplayedScale, type Bounds, type EasePhase } from './scaleEase'
 
 export interface FrameCanvasProps {
   frameSet: FrameSet
@@ -75,7 +75,7 @@ function makeProjector(
   width: number,
   height: number,
 ): Projector {
-  const pad = Math.max(22, Math.min(width, height) * 0.09)
+  const pad = fitPadding(width, height)
   const availW = Math.max(width - 2 * pad, 1)
   const availH = Math.max(height - 2 * pad, 1)
   const spanX = Math.max(bounds.maxX - bounds.minX, 1e-9)

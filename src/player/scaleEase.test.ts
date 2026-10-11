@@ -63,8 +63,8 @@ describe('nextDisplayedScale', () => {
 describe('fitScale', () => {
   it('fits 10x20 world units in an 800x600 canvas', () => {
     const bounds: Bounds = { minX: 0, minY: 0, maxX: 10, maxY: 20 }
-    // pad = max(22, min(800,600)*0.09) = 54 -> availW 692, availH 492.
-    expect(fitScale(bounds, 800, 600)).toBeCloseTo(Math.min(692 / 10, 492 / 20), 10)
+    // pad = max(8, min(800,600)*0.02) = 12 -> availW 776, availH 576.
+    expect(fitScale(bounds, 800, 600)).toBeCloseTo(Math.min(776 / 10, 576 / 20), 10)
   })
 })
 
