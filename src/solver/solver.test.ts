@@ -6,6 +6,8 @@ import {
   computeReferenceLength,
   computeSegments,
   normalize,
+  clampMagnitude,
+  length,
 } from './forces'
 import { CancelledError, solve } from './solve'
 import { DEFAULT_CONSTANTS, type Vec2 } from './types'
@@ -358,6 +360,49 @@ describe('randomized initialization', () => {
       const nLast = normalize(sLast)
       expect(n0[1]).toBeCloseTo(0, 10)
       expect(nLast[1]).toBeCloseTo(0, 10)
+    }
+  })
+})
+
+describe('force bound', () => {
+  it('clampMagnitude keeps direction and caps length', () => {
+    const v = clampMagnitude([3, 4], 2)
+    expect(length(v)).toBeCloseTo(2, 12)
+    expect(v[0]).toBeCloseTo(1.2, 12)
+    expect(v[1]).toBeCloseTo(1.6, 12)
+  })
+
+  it('returns a vector already within the bound unchanged', () => {
+    const v = clampMagnitude([1, 2], 5)
+    expect(v).toEqual([1, 2])
+  })
+
+  it('computeAcceleration respects constants.maxForce', () => {
+    const pts: Vec2[] = [
+      [0, 0],
+      [10, 0],
+      [10, 10],
+      [0, 10],
+    ]
+    const vel = (Array.from({ length: 4 }, () => [0, 0]) as Vec2[])
+    const accel = computeAcceleration(pts, vel, { ...DEFAULT_CONSTANTS, maxForce: 1 })
+    for (let k = 1; k < pts.length - 1; k++) {
+      const mag = Math.hypot(accel[k][0], accel[k][1])
+      expect(mag).toBeLessThanOrEqual(1 + 1e-9)
+    }
+  })
+
+  it('solve stays finite with a tiny bound', () => {
+    const input = {
+      n: 3,
+      start: [0, 0] as Vec2,
+      end: [10, 0] as Vec2,
+      startDir: [1, 0] as Vec2,
+      endDir: [1, 0] as Vec2,
+    }
+    const result = solve(input, { ...DEFAULT_CONSTANTS, maxForce: 1, maxIter: 50 }, plainInit)
+    for (const frame of result.frames) {
+      expect(frame.pts.every((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]))).toBe(true)
     }
   })
 })

@@ -34,16 +34,19 @@ export interface PhysicsConstants {
   settleFrames: number
   /** Safety cap on the number of iterations. */
   maxIter: number
+  /** Safety cap on the per-point net force (mass = 1, so this bounds acceleration). */
+  maxForce: number
 }
 
 export const DEFAULT_CONSTANTS: PhysicsConstants = {
-  kLen: 1,
+  kLen: 100,
   kBend: 1,
   gamma: 0.1,
   h: 0.01,
   epsilon: 1e-4,
   settleFrames: 30,
   maxIter: 100000,
+  maxForce: 1000,
 }
 
 /**

@@ -142,6 +142,12 @@ export function computeFrictionForce(vel: Vec2, gamma: number): Vec2 {
   return scale(vel, -gamma)
 }
 
+/** Cap a vector's length at max, preserving direction. */
+export function clampMagnitude(v: Vec2, max: number): Vec2 {
+  const m = length(v)
+  return m > max ? scale(v, max / m) : v
+}
+
 /** Compute total acceleration for all free points (indices 1..n). */
 export function computeAcceleration(
   pts: Vec2[],
@@ -166,6 +172,11 @@ export function computeAcceleration(
     accel[k] = add(accel[k], cur)
     if (k - 1 >= 1) accel[k - 1] = add(accel[k - 1], prev)
     if (k + 1 <= n) accel[k + 1] = add(accel[k + 1], next)
+  }
+
+  // Per-free-point force cap — clamp each free point's net acceleration.
+  if (Number.isFinite(constants.maxForce)) {
+    for (let k = 1; k <= n; k++) accel[k] = clampMagnitude(accel[k], constants.maxForce)
   }
 
   return accel
