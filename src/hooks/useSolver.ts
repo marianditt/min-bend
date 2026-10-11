@@ -129,7 +129,7 @@ export function useSolver(): SolverController {
             setState({
               status: 'done',
               progress: 1,
-              iteration: frames.length,
+              iteration: message.result.meta.iterations ?? frames.length,
               ke: frames.at(-1)?.ke ?? 0,
               result: message.result,
               error: null,

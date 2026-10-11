@@ -114,7 +114,9 @@ function App() {
     [compute],
   )
 
-  const resultIterations = result ? result.frames.length : null
+  const resultIterations = result
+    ? (result.meta.iterations ?? result.frames.length)
+    : null
   const termination = result ? result.meta.termination : null
 
   return (
