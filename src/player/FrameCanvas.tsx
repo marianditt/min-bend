@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { FrameSet } from '../solver/types'
+import type { FrameSet, Vec2 } from '../solver/types'
 
 export interface FrameCanvasProps {
   frameSet: FrameSet
@@ -46,19 +46,16 @@ const DARK_THEME: Theme = {
   orient: '#fbbf24',
 }
 
-/** Union bounding box of every point across every frame (stable view). */
-function computeBounds(frameSet: FrameSet): Bounds {
+function computePtsBounds(pts: Vec2[]): Bounds {
   let minX = Infinity
   let minY = Infinity
   let maxX = -Infinity
   let maxY = -Infinity
-  for (const frame of frameSet.frames) {
-    for (const [x, y] of frame.pts) {
-      if (x < minX) minX = x
-      if (y < minY) minY = y
-      if (x > maxX) maxX = x
-      if (y > maxY) maxY = y
-    }
+  for (const [x, y] of pts) {
+    if (x < minX) minX = x
+    if (y < minY) minY = y
+    if (x > maxX) maxX = x
+    if (y > maxY) maxY = y
   }
   if (!Number.isFinite(minX)) {
     return { minX: -1, minY: -1, maxX: 1, maxY: 1 }
@@ -242,7 +239,9 @@ export function FrameCanvas({ frameSet, frameIndex }: FrameCanvasProps) {
   const [size, setSize] = useState({ width: 0, height: 0 })
   const dark = usePrefersDark()
 
-  const bounds = useMemo(() => computeBounds(frameSet), [frameSet])
+  const clampedIndex = Math.min(Math.max(frameIndex, 0), Math.max(frameSet.frames.length - 1, 0))
+  const framePts = frameSet.frames[clampedIndex]?.pts
+  const bounds = useMemo(() => computePtsBounds(framePts ?? []), [framePts])
   const theme = dark ? DARK_THEME : LIGHT_THEME
 
   useEffect(() => {
@@ -268,6 +267,15 @@ export function FrameCanvas({ frameSet, frameIndex }: FrameCanvasProps) {
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     draw(frameSet, frameIndex, ctx, size.width, size.height, bounds, theme)
+    const scalePad = Math.max(22, Math.min(size.width, size.height) * 0.09)
+    const spanX = Math.max(bounds.maxX - bounds.minX, 1e-9)
+    const spanY = Math.max(bounds.maxY - bounds.minY, 1e-9)
+    canvas.dataset.scale = String(
+      Math.min(
+        Math.max(size.width - 2 * scalePad, 1) / spanX,
+        Math.max(size.height - 2 * scalePad, 1) / spanY,
+      ),
+    )
   }, [frameSet, frameIndex, size, bounds, theme])
 
   return (

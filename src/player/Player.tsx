@@ -84,7 +84,7 @@ export function Player({ frameSet }: PlayerProps) {
   const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(total > 1)
   const [speed, setSpeed] = useState(1)
-  const [loop, setLoop] = useState(true)
+  const [loop, setLoop] = useState(false)
 
   // Mirrors of state read inside the animation loop without re-subscribing.
   const indexRef = useRef(0)
