@@ -1,0 +1,115 @@
+/* Shared numeric field primitives (used by NumberField). */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 1.1em;
+}
+
+.field__label {
+  font-size: var(--text-sm);
+  font-weight: 560;
+  color: var(--text);
+}
+
+.field__hint {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.field__control {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+.field__input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+  transition: border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.field__input::placeholder {
+  color: var(--text-faint);
+}
+
+.field__input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field__input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.field__input[aria-invalid='true']:focus {
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.field__input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.field__step {
+  flex: none;
+  width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-lg);
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.field__step:hover:not(:disabled) {
+  background: var(--bg-sunken);
+  color: var(--text);
+}
+
+.field__step:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.field__step:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.field__step:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.field__error {
+  font-size: var(--text-xs);
+  color: var(--danger);
+  line-height: 1.35;
+}
