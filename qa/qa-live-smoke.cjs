@@ -1,0 +1,50 @@
+// Live deployment smoke test for the min-bend app.
+//
+// Usage:  node qa/qa-live-smoke.cjs
+//
+// Env overrides:
+//   QA_LIVE_URL      site under test (default https://marianditt.github.io/min-bend/)
+//   PLAYWRIGHT_CORE  explicit path to a playwright-core install
+function resolvePlaywright() {
+  if (process.env.PLAYWRIGHT_CORE) return process.env.PLAYWRIGHT_CORE
+  try {
+    return require.resolve('playwright-core')
+  } catch {
+    return '/home/marian/.npm/_npx/420ff84f11983ee5/node_modules/playwright-core'
+  }
+}
+const { firefox } = require(resolvePlaywright())
+
+const LIVE_URL = process.env.QA_LIVE_URL || 'https://marianditt.github.io/min-bend/'
+
+;(async () => {
+  const browser = await firefox.launch({ headless: true })
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+  const errs = []
+  page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()) })
+  page.on('pageerror', (e) => errs.push(String(e)))
+  try {
+    const resp = await page.goto(LIVE_URL, { waitUntil: 'load', timeout: 45000 })
+    console.log('http status:', resp.status())
+    await page.waitForSelector('h1.app__title', { timeout: 15000 })
+    console.log('title:', (await page.textContent('h1.app__title')).trim())
+
+    const vecInput = (g, a) => page.locator('.group', { hasText: g }).locator('.field', { hasText: a }).locator('input').first()
+    console.log('end X/Y:', await vecInput('End point', 'X').inputValue(), '/', await vecInput('End point', 'Y').inputValue())
+
+    await page.locator('button:has-text("Compute")').first().click()
+    await page.waitForSelector('.notice--success', { timeout: 90000 })
+    const txt = (await page.textContent('.notice--success')).trim()
+    console.log('notice:', txt)
+    console.log('player visible:', await page.isVisible('.player'))
+
+    const scale = await page.evaluate(() => Number(document.querySelector('canvas')?.dataset.scale || '-1'))
+    console.log('canvas scale:', scale)
+    console.log('console errors:', errs.filter((e) => !/favicon/i.test(e)).length)
+    console.log(/Converged/.test(txt) ? '\nLIVE SMOKE: PASS' : '\nLIVE SMOKE: FAIL')
+  } catch (e) {
+    console.log('LIVE SMOKE: FAIL —', e.message)
+  } finally {
+    await browser.close()
+  }
+})()

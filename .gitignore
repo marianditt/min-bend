@@ -27,3 +27,6 @@ dist-ssr
 .opencode/
 .omo/
 .codegraph
+
+# QA artifacts (screenshots written by qa/*.cjs)
+qa/artifacts/
