@@ -205,9 +205,7 @@ export function Player({ frameSet }: PlayerProps) {
       tabIndex={0}
       onKeyDown={onKeyDown}
     >
-      <div className="player__stage">
-        <FrameCanvas frameSet={frameSet} frameIndex={safeIndex} playing={playing} />
-
+      <div className="player__stagebar">
         <div className="player__legend">
           {legend.map((item) => (
             <span className="legend-chip" key={item.className}>
@@ -221,6 +219,10 @@ export function Player({ frameSet }: PlayerProps) {
           <span>{frameSet.meta.N} pts</span>
           <span>KE {formatEnergy(ke)}</span>
         </div>
+      </div>
+
+      <div className="player__stage">
+        <FrameCanvas frameSet={frameSet} frameIndex={safeIndex} playing={playing} />
       </div>
 
       <div className="player__plot">

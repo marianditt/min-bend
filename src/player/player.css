@@ -63,12 +63,17 @@
   height: 100%;
 }
 
-/* Overlays on the canvas */
+.player__stagebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* Legend and HUD row */
 
 .player__legend {
-  position: absolute;
-  top: var(--space-3);
-  left: var(--space-3);
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
@@ -132,9 +137,6 @@
 }
 
 .player__hud {
-  position: absolute;
-  right: var(--space-3);
-  bottom: var(--space-3);
   display: flex;
   gap: var(--space-3);
   padding: 5px 10px;
