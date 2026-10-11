@@ -27,6 +27,9 @@ export interface SolveOptions {
 /** Initial-pose jitter amplitude, as a fraction of the segment spacing. */
 const INIT_JITTER = 0.15
 
+/** Fallback spacing when anchors coincide (chord length ~ 0). */
+const FALLBACK_SPACING = 1
+
 /**
  * Initialize points and velocities: a straight chord between the two
  * orientation-anchored neighbours, with a small perpendicular jitter on the
@@ -41,7 +44,10 @@ function initializePoints(input: ProblemInput, random: () => number): { pts: Vec
   const d1 = normalize(endDir)
 
   const D = Math.hypot(end[0] - start[0], end[1] - start[1])
-  const o = D / (n + 1)
+
+  // Coincident-anchor branch: when start and end are effectively the same point,
+  // use a circular layout around the anchor instead of a degenerate chord.
+  const o = D < EPS_STABILIZE ? FALLBACK_SPACING : D / (n + 1)
 
   const pts: Vec2[] = new Array(N)
   const vel: Vec2[] = new Array(N)
@@ -58,25 +64,39 @@ function initializePoints(input: ProblemInput, random: () => number): { pts: Vec
   vel[1] = [0, 0]
   vel[n] = [0, 0]
 
-  // Interior free points: p_k = p_1 + ((k-1)/(n-1)) * (p_n - p_1), with a
-  // small perpendicular jitter unless the anchoring chord is degenerate.
-  const p1 = pts[1]
-  const pn = pts[n]
-  const dp = [pn[0] - p1[0], pn[1] - p1[1]]
-  const dpLen = Math.hypot(dp[0], dp[1])
-  const perp: Vec2 | null = dpLen >= EPS_STABILIZE ? [-dp[1] / dpLen, dp[0] / dpLen] : null
-
-  for (let k = 2; k < n; k++) {
-    const t = (k - 1) / (n - 1)
-    let x = p1[0] + t * dp[0]
-    let y = p1[1] + t * dp[1]
-    if (perp) {
-      const amp = INIT_JITTER * o * (2 * random() - 1)
-      x += amp * perp[0]
-      y += amp * perp[1]
+  // Interior free points: when anchors coincide, lay out on a circle of radius o;
+  // otherwise use the existing chord+jitter path.
+  if (D < EPS_STABILIZE) {
+    // Coincident anchors: fill free points on a circle around the anchor
+    const th_start = Math.atan2(d0[1], d0[0])
+    const th_end = Math.atan2(-d1[1], -d1[0])
+    let sweep = ((th_end - th_start) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI)
+    if (sweep < EPS_STABILIZE) sweep = 2 * Math.PI // go the long way around
+    for (let k = 2; k < n; k++) {
+      const th_k = th_start + sweep * (k - 1) / (n - 1)
+      pts[k] = [start[0] + o * Math.cos(th_k), start[1] + o * Math.sin(th_k)]
+      vel[k] = [0, 0]
     }
-    pts[k] = [x, y]
-    vel[k] = [0, 0]
+  } else {
+    // General path: chord with perpendicular jitter
+    const p1 = pts[1]
+    const pn = pts[n]
+    const dp = [pn[0] - p1[0], pn[1] - p1[1]]
+    const dpLen = Math.hypot(dp[0], dp[1])
+    const perp: Vec2 | null = dpLen >= EPS_STABILIZE ? [-dp[1] / dpLen, dp[0] / dpLen] : null
+
+    for (let k = 2; k < n; k++) {
+      const t = (k - 1) / (n - 1)
+      let x = p1[0] + t * dp[0]
+      let y = p1[1] + t * dp[1]
+      if (perp) {
+        const amp = INIT_JITTER * o * (2 * random() - 1)
+        x += amp * perp[0]
+        y += amp * perp[1]
+      }
+      pts[k] = [x, y]
+      vel[k] = [0, 0]
+    }
   }
 
   return { pts, vel }
@@ -138,7 +158,7 @@ export function solve(
   const { onProgress, shouldCancel, random = Math.random } = options
   const { n, startDir, endDir } = input
   const N = n + 2
-  const { h, epsilon, muteFrames, maxIter } = constants
+  const { h, epsilon, settleFrames, maxIter } = constants
 
   // Initialize
   const { pts, vel } = initializePoints(input, random)
@@ -154,6 +174,7 @@ export function solve(
 
   let termination: 'ke' | 'maxIter' = 'maxIter'
   let kePeak = initialKe
+  let settleStreak = 0
 
   // Main simulation loop
   for (let i = 1; i <= maxIter; i++) {
@@ -186,6 +207,9 @@ export function solve(
     const ke = computeKineticEnergy(vel)
     if (ke > kePeak) kePeak = ke
 
+    if (ke < epsilon) settleStreak += 1
+    else settleStreak = 0
+
     // Record frame
     frames.push({ i, ke, pts: copyPoints(pts) })
 
@@ -193,7 +217,7 @@ export function solve(
     report(i, ke)
 
     // Termination check
-    if (i >= muteFrames && ke < epsilon) {
+    if (settleStreak >= settleFrames) {
       termination = 'ke'
       break
     }

@@ -1,16 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FrameSet, Vec2 } from '../solver/types'
+import { boundsForScale, fitScale, nextDisplayedScale, type Bounds, type EasePhase } from './scaleEase'
 
 export interface FrameCanvasProps {
   frameSet: FrameSet
   frameIndex: number
-}
-
-interface Bounds {
-  minX: number
-  minY: number
-  maxX: number
-  maxY: number
+  playing: boolean
 }
 
 interface Theme {
@@ -233,11 +228,14 @@ function usePrefersDark(): boolean {
   return dark
 }
 
-export function FrameCanvas({ frameSet, frameIndex }: FrameCanvasProps) {
+export function FrameCanvas({ frameSet, frameIndex, playing }: FrameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const dark = usePrefersDark()
+
+  const displayedScaleRef = useRef(0)
+  const phaseRef = useRef<EasePhase | null>(null)
 
   const clampedIndex = Math.min(Math.max(frameIndex, 0), Math.max(frameSet.frames.length - 1, 0))
   const framePts = frameSet.frames[clampedIndex]?.pts
@@ -266,17 +264,22 @@ export function FrameCanvas({ frameSet, frameIndex }: FrameCanvasProps) {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    draw(frameSet, frameIndex, ctx, size.width, size.height, bounds, theme)
-    const scalePad = Math.max(22, Math.min(size.width, size.height) * 0.09)
-    const spanX = Math.max(bounds.maxX - bounds.minX, 1e-9)
-    const spanY = Math.max(bounds.maxY - bounds.minY, 1e-9)
-    canvas.dataset.scale = String(
-      Math.min(
-        Math.max(size.width - 2 * scalePad, 1) / spanX,
-        Math.max(size.height - 2 * scalePad, 1) / spanY,
-      ),
-    )
-  }, [frameSet, frameIndex, size, bounds, theme])
+    const target = fitScale(bounds, size.width, size.height)
+    const previous = displayedScaleRef.current === 0 ? target : displayedScaleRef.current
+    const result = nextDisplayedScale({
+      previous,
+      target,
+      phase: phaseRef.current,
+      frameIndex: clampedIndex,
+      totalFrames: frameSet.frames.length,
+      easingEnabled: playing,
+    })
+    displayedScaleRef.current = result.scale
+    phaseRef.current = result.phase
+    const drawBounds = result.scale === target ? bounds : boundsForScale(bounds, target, result.scale)
+    draw(frameSet, frameIndex, ctx, size.width, size.height, drawBounds, theme)
+    canvas.dataset.scale = String(result.scale)
+  }, [frameSet, frameIndex, size, bounds, theme, playing, clampedIndex])
 
   return (
     <div className="frame-canvas" ref={containerRef}>

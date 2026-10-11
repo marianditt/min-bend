@@ -40,9 +40,9 @@ describe('validateInput', () => {
     expect(validateInput({ ...validInput, endDir: [0, 0] })[0].field).toBe('endDir')
   })
 
-  it('rejects coincident start and end', () => {
+  it('accepts coincident start and end', () => {
     const issues = validateInput({ ...validInput, start: [5, 0], end: [5, 0] })
-    expect(issues.some((i) => i.field === 'end')).toBe(true)
+    expect(issues).toEqual([])
   })
 
   it('rejects non-finite coordinates', () => {
@@ -209,16 +209,22 @@ describe('constraints', () => {
 })
 
 describe('termination', () => {
-  it('stops a static chain via KE threshold after muteFrames', () => {
-    const result = solve(validInput, { ...DEFAULT_CONSTANTS, muteFrames: 10, maxIter: 20000 }, plainInit)
+  it('stops a static chain via KE threshold after settleFrames', () => {
+    const result = solve(validInput, { ...DEFAULT_CONSTANTS, settleFrames: 10, maxIter: 20000 }, plainInit)
     expect(result.meta.termination).toBe('ke')
     expect(result.frames.length).toBe(11)
   })
 
   it('respects maxIter when it is reached first', () => {
-    const result = solve(validInput, { ...DEFAULT_CONSTANTS, muteFrames: 1000, maxIter: 5 }, plainInit)
+    const result = solve(validInput, { ...DEFAULT_CONSTANTS, settleFrames: 1000, maxIter: 5 }, plainInit)
     expect(result.meta.termination).toBe('maxIter')
     expect(result.frames.length).toBe(6)
+  })
+
+  it('requires settleFrames consecutive quiet frames', () => {
+    const result = solve(validInput, { ...DEFAULT_CONSTANTS, settleFrames: 1, maxIter: 20000 }, plainInit)
+    expect(result.meta.termination).toBe('ke')
+    expect(result.frames.length).toBe(2)
   })
 
   it('relaxes a kinked chain to a finite, stable equilibrium', () => {
@@ -245,6 +251,42 @@ describe('termination', () => {
     }
     expect(result.frames[result.frames.length - 1].ke).toBeLessThan(DEFAULT_CONSTANTS.epsilon)
     expect(progress[progress.length - 1]).toBe(1)
+  })
+
+  it('lays out a non-degenerate loop when anchors coincide', () => {
+    const input = {
+      n: 6,
+      start: [0, 0] as Vec2,
+      end: [0, 0] as Vec2,
+      startDir: [0, 1] as Vec2,
+      endDir: [0, -1] as Vec2,
+    }
+    const result = solve(input, { ...DEFAULT_CONSTANTS, epsilon: 1e-12, settleFrames: 1, maxIter: 5 }, plainInit)
+    // all points finite
+    for (const frame of result.frames) {
+      expect(frame.pts.every((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]))).toBe(true)
+    }
+    const frame0 = result.frames[0]
+    // first segment normalized ≈ [0,1]
+    const s0: Vec2 = [frame0.pts[1][0] - frame0.pts[0][0], frame0.pts[1][1] - frame0.pts[0][1]]
+    expect(normalize(s0)[0]).toBeCloseTo(0, 12)
+    expect(normalize(s0)[1]).toBeCloseTo(1, 12)
+    // last segment normalized ≈ [0,-1]
+    const N = frame0.pts.length
+    const sLast: Vec2 = [frame0.pts[N - 1][0] - frame0.pts[N - 2][0], frame0.pts[N - 1][1] - frame0.pts[N - 2][1]]
+    expect(normalize(sLast)[0]).toBeCloseTo(0, 12)
+    expect(normalize(sLast)[1]).toBeCloseTo(-1, 12)
+    // chain not degenerate: some axis span > 1e-6
+    const xs = frame0.pts.map((p) => p[0])
+    const ys = frame0.pts.map((p) => p[1])
+    expect(Math.max(...xs) - Math.min(...xs) > 1e-6 || Math.max(...ys) - Math.min(...ys) > 1e-6).toBe(true)
+    // all middle segment lengths ≥ 1e-9 and finite
+    const { lengths } = computeSegments(frame0.pts)
+    const mid = lengths.slice(1, -1)
+    for (const len of mid) {
+      expect(len).toBeGreaterThanOrEqual(1e-9)
+      expect(Number.isFinite(len)).toBe(true)
+    }
   })
 })
 

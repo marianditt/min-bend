@@ -1,6 +1,6 @@
 // Shared contract for the min-bend solver and renderer.
 // FROZEN: both the solver and the UI are built against these types.
-// Extend only additively (new optional fields), never rename/remove.
+// Extend only additively (new optional fields). muteFrames was renamed to settleFrames when the KE gate became a consecutive-quiet-frame gate.
 
 export type Vec2 = [number, number]
 
@@ -30,8 +30,8 @@ export interface PhysicsConstants {
   h: number
   /** Kinetic-energy threshold for termination. */
   epsilon: number
-  /** Number of opening frames during which the KE termination gate is muted. */
-  muteFrames: number
+  /** Consecutive frames with KE below epsilon before termination. */
+  settleFrames: number
   /** Safety cap on the number of iterations. */
   maxIter: number
 }
@@ -42,8 +42,8 @@ export const DEFAULT_CONSTANTS: PhysicsConstants = {
   gamma: 0.1,
   h: 0.01,
   epsilon: 1e-4,
-  muteFrames: 10,
-  maxIter: 20000,
+  settleFrames: 30,
+  maxIter: 100000,
 }
 
 /**

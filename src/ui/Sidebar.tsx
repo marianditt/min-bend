@@ -27,7 +27,7 @@ type VecKey = 'start' | 'end' | 'startDir' | 'endDir'
 const DEFAULT_INPUT: ProblemInput = {
   n: 6,
   start: [0, 0],
-  end: [10, 0],
+  end: [0, 0],
   startDir: [0, 1],
   endDir: [0, -1],
 }
@@ -56,12 +56,12 @@ const CONSTANT_SPECS: ConstantSpec[] = [
     wide: true,
   },
   {
-    key: 'muteFrames',
-    label: 'Mute frames',
-    hint: 'ignore KE gate early',
+    key: 'settleFrames',
+    label: 'Settle frames',
+    hint: 'KE below ε for N frames',
     step: 1,
     integer: true,
-    min: 0,
+    min: 1,
   },
   {
     key: 'maxIter',
@@ -89,7 +89,7 @@ function constantProblem(c: PhysicsConstants): string | null {
     ['Friction', c.gamma],
     ['Step size', c.h],
     ['KE threshold', c.epsilon],
-    ['Mute frames', c.muteFrames],
+    ['Settle frames', c.settleFrames],
     ['Max iterations', c.maxIter],
   ]
   for (const [name, value] of named) {
@@ -99,7 +99,7 @@ function constantProblem(c: PhysicsConstants): string | null {
   if (c.gamma < 0) return 'Friction must be ≥ 0.'
   if (!(c.h > 0)) return 'Step size must be > 0.'
   if (c.epsilon < 0) return 'KE threshold must be ≥ 0.'
-  if (c.muteFrames < 0) return 'Mute frames must be ≥ 0.'
+  if (c.settleFrames < 1) return 'Settle frames must be ≥ 1.'
   if (c.maxIter < 1) return 'Max iterations must be ≥ 1.'
   return null
 }

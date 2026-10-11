@@ -205,7 +205,7 @@ export function Player({ frameSet }: PlayerProps) {
       onKeyDown={onKeyDown}
     >
       <div className="player__stage">
-        <FrameCanvas frameSet={frameSet} frameIndex={safeIndex} />
+        <FrameCanvas frameSet={frameSet} frameIndex={safeIndex} playing={playing} />
 
         <div className="player__legend">
           {legend.map((item) => (

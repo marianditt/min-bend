@@ -21,7 +21,6 @@ function isFiniteVec(v: unknown): v is [number, number] {
  *  - n is an integer >= 2
  *  - all coordinates are finite
  *  - start/end orientations are non-zero vectors
- *  - start and end points are not (near-)coincident
  */
 export function validateInput(input: ProblemInput): ValidationIssue[] {
   const issues: ValidationIssue[] = []
@@ -54,16 +53,6 @@ export function validateInput(input: ProblemInput): ValidationIssue[] {
     issues.push({
       field: 'endDir',
       message: `End orientation must be a non-zero vector (length > ${EPS_STABILIZE}).`,
-    })
-  }
-  if (
-    isFiniteVec(start) &&
-    isFiniteVec(end) &&
-    Math.hypot(end[0] - start[0], end[1] - start[1]) <= EPS_STABILIZE
-  ) {
-    issues.push({
-      field: 'end',
-      message: `Start and end point must differ by more than ${EPS_STABILIZE}.`,
     })
   }
 
