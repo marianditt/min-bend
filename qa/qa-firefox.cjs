@@ -96,12 +96,6 @@ function check(name, cond, extra = '') {
     check('Success: player visible', await page.isVisible('.player'))
     check('Success: HUD shows 8 pts', (await page.textContent('.player__hud')).includes('8 pts'))
 
-    // Pause auto-play, then jump to frame 1 so the label is deterministic
-    await page.getByRole('button', { name: 'Pause', exact: true }).click()
-    await page.locator('.scrub').focus()
-    await page.locator('.scrub').press('Home')
-    await page.waitForTimeout(150)
-
     const frameLabel = () => page.textContent('.frame-label')
     const frameNum = async () => {
       const t = await frameLabel()
@@ -109,6 +103,20 @@ function check(name, cond, extra = '') {
       const num = (s) => Number(String(s).replace(/,/g, ''))
       return m ? { cur: num(m[1]), tot: num(m[2]) } : { cur: -1, tot: -1 }
     }
+
+    // Player must not auto-play on mount; it should sit paused at frame 0.
+    check(
+      'Playback: does not auto-play on mount',
+      await page.getByRole('button', { name: 'Play', exact: true }).isVisible(),
+    )
+    await page.locator('.scrub').focus()
+    await page.locator('.scrub').press('Home')
+    await page.waitForTimeout(150)
+    const restA = await frameNum()
+    await page.waitForTimeout(400)
+    const restB = await frameNum()
+    check('Playback: paused player stays put', restA.cur === restB.cur, `f=${restA.cur}`)
+
     const { cur, tot } = await frameNum()
     check('Player: frame 1 of N', cur === 1 && tot > 1, `N=${tot}`)
 
@@ -138,7 +146,7 @@ function check(name, cond, extra = '') {
     const plotSigFrame1 = await plotSig()
     check('Plot: canvas painted at frame 1', plotSigFrame1 > 0, `sig=${plotSigFrame1}`)
 
-    // Resume playback for the auto-play advance check below
+    // Start playback to verify the animation advances
     await page.getByRole('button', { name: 'Play', exact: true }).click()
 
     // canvas has actual content (not blank)
@@ -165,10 +173,10 @@ function check(name, cond, extra = '') {
     await page.getByLabel('Slow down').click()
     check('Speed: back to 2×', (await speedLabel.textContent()).trim() === '2×')
 
-    // --- Playback auto-plays on mount and advances ---
+    // --- Playback advances while playing ---
     await page.waitForTimeout(900)
     const afterPlay = await frameNum()
-    check('Playback: auto-play advances frames', afterPlay.cur > 1, `frame=${afterPlay.cur}`)
+    check('Playback: Play advances frames', afterPlay.cur > 1, `frame=${afterPlay.cur}`)
     const plotSigLater = await plotSig()
     check(
       'Plot: animates with the current frame',

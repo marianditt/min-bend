@@ -83,7 +83,7 @@ export function Player({ frameSet }: PlayerProps) {
   const lastIndex = Math.max(0, total - 1)
 
   const [index, setIndex] = useState(0)
-  const [playing, setPlaying] = useState(total > 1)
+  const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
   const [loop, setLoop] = useState(false)
 
