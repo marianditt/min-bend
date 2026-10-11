@@ -10,7 +10,8 @@ import {
   length,
 } from './forces'
 import { CancelledError, solve } from './solve'
-import { DEFAULT_CONSTANTS, type Vec2 } from './types'
+import { createFrameBuffer } from './frameBuffer'
+import { DEFAULT_CONSTANTS, type Frame, type Vec2 } from './types'
 import { validateInput } from './validate'
 
 const validInput = {
@@ -404,5 +405,49 @@ describe('force bound', () => {
     for (const frame of result.frames) {
       expect(frame.pts.every((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]))).toBe(true)
     }
+  })
+})
+
+describe('frame buffer', () => {
+  const buf = (i: number): Frame => ({ i, ke: 0, pts: [] })
+
+  it('keeps every frame when the run stays within the cap', () => {
+    const buffer = createFrameBuffer(100000)
+    for (let i = 0; i <= 7; i++) buffer.add(buf(i))
+    const out = buffer.finish(buf(7))
+    expect(out.map((f) => f.i)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+  })
+
+  it('caps at maxFrames and preserves the first and last frames', () => {
+    const maxFrames = 100
+    const buffer = createFrameBuffer(maxFrames)
+    const total = 5000
+    for (let i = 0; i <= total; i++) buffer.add(buf(i))
+    const out = buffer.finish(buf(total))
+    expect(out.length).toBe(maxFrames)
+    expect(out[0].i).toBe(0)
+    expect(out[out.length - 1].i).toBe(total)
+  })
+
+  it('keeps roughly even spacing after decimation', () => {
+    const buffer = createFrameBuffer(64)
+    const total = 4000
+    for (let i = 0; i <= total; i++) buffer.add(buf(i))
+    const out = buffer.finish(buf(total))
+    const gaps: number[] = []
+    for (let k = 1; k < out.length; k++) gaps.push(out[k].i - out[k - 1].i)
+    const min = Math.min(...gaps)
+    const max = Math.max(...gaps)
+    expect(min).toBeGreaterThan(0)
+    expect(max / min).toBeLessThan(4)
+  })
+
+  it('appends a final frame that the stride skipped', () => {
+    const buffer = createFrameBuffer(4)
+    for (let i = 0; i <= 30; i++) buffer.add(buf(i))
+    const out = buffer.finish(buf(31))
+    expect(out[0].i).toBe(0)
+    expect(out[out.length - 1].i).toBe(31)
+    expect(out.length).toBeLessThanOrEqual(4)
   })
 })

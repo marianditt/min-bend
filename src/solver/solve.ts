@@ -8,6 +8,7 @@ import {
   enforceOrientationConstraints,
   verifyFinite,
 } from './forces'
+import { createFrameBuffer } from './frameBuffer'
 
 /** Thrown by solve() when shouldCancel() returns true. */
 export class CancelledError extends Error {
@@ -164,9 +165,9 @@ export function solve(
   const { pts, vel } = initializePoints(input, random)
 
   // Record initial frame (i = 0)
-  const frames: Frame[] = []
+  const buffer = createFrameBuffer()
   const initialKe = computeKineticEnergy(vel)
-  frames.push({ i: 0, ke: initialKe, pts: copyPoints(pts) })
+  buffer.add({ i: 0, ke: initialKe, pts: copyPoints(pts) })
 
   // Progress reporting
   const { report, finalize } = makeProgressReporter(onProgress, maxIter)
@@ -175,6 +176,8 @@ export function solve(
   let termination: 'ke' | 'maxIter' = 'maxIter'
   let kePeak = initialKe
   let settleStreak = 0
+  let lastIter = 0
+  let lastKe = initialKe
 
   // Main simulation loop
   for (let i = 1; i <= maxIter; i++) {
@@ -210,8 +213,10 @@ export function solve(
     if (ke < epsilon) settleStreak += 1
     else settleStreak = 0
 
-    // Record frame
-    frames.push({ i, ke, pts: copyPoints(pts) })
+    // Record frame (the buffer decimates once the cap is exceeded)
+    buffer.add({ i, ke, pts: copyPoints(pts) })
+    lastIter = i
+    lastKe = ke
 
     // Progress report
     report(i, ke)
@@ -229,6 +234,11 @@ export function solve(
 
   finalize()
 
+  // Append the final frame if the stride skipped it, then decimate to the cap
+  // while preserving the first and last frames.
+  const last: Frame = { i: lastIter, ke: lastKe, pts: copyPoints(pts) }
+  const frames = buffer.finish(last)
+
   const meta: FrameMeta = {
     n,
     N,
@@ -236,6 +246,7 @@ export function solve(
     constants,
     termination,
     frameCount: frames.length,
+    iterations: lastIter,
   }
 
   return {

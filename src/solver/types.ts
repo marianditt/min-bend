@@ -72,7 +72,10 @@ export interface FrameMeta {
   constants: PhysicsConstants
   /** Why the simulation stopped. */
   termination: 'ke' | 'maxIter'
+  /** Number of frames retained for playback (≤ the true iteration count once decimated). */
   frameCount: number
+  /** True solver iterations run. Optional so older results stay valid; falls back to frameCount. */
+  iterations?: number
 }
 
 /** Versioned, extensible result container. */
