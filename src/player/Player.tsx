@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { FrameSet } from '../solver/types'
 import { FrameCanvas } from './FrameCanvas'
+import { SegmentPlot } from './SegmentPlot'
 import './player.css'
 
 export interface PlayerProps {
@@ -220,6 +221,10 @@ export function Player({ frameSet }: PlayerProps) {
           <span>{frameSet.meta.N} pts</span>
           <span>KE {formatEnergy(ke)}</span>
         </div>
+      </div>
+
+      <div className="player__plot">
+        <SegmentPlot frameSet={frameSet} frameIndex={safeIndex} />
       </div>
 
       <div className="player__controls">

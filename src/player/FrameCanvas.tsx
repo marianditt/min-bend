@@ -11,6 +11,7 @@ export interface FrameCanvasProps {
 interface Theme {
   bg: string
   grid: string
+  axis: string
   chain: string
   point: string
   pointRing: string
@@ -22,6 +23,7 @@ interface Theme {
 const LIGHT_THEME: Theme = {
   bg: '#f8f9fb',
   grid: 'rgba(20, 25, 35, 0.055)',
+  axis: '#4b5563',
   chain: '#1f2530',
   point: '#3563e9',
   pointRing: 'rgba(255, 255, 255, 0.95)',
@@ -33,6 +35,7 @@ const LIGHT_THEME: Theme = {
 const DARK_THEME: Theme = {
   bg: '#0b0d11',
   grid: 'rgba(255, 255, 255, 0.05)',
+  axis: '#8b95a7',
   chain: '#e6e9ef',
   point: '#7aa2ff',
   pointRing: 'rgba(11, 13, 17, 0.95)',
@@ -61,6 +64,9 @@ function computePtsBounds(pts: Vec2[]): Bounds {
 interface Projector {
   toX: (x: number) => number
   toY: (y: number) => number
+  scale: number
+  cx: number
+  cy: number
 }
 
 /** Equal-scale, centered fit of the bounds into the canvas with padding. */
@@ -80,21 +86,77 @@ function makeProjector(
   return {
     toX: (x) => width / 2 + (x - cx) * scale,
     toY: (y) => height / 2 - (y - cy) * scale,
+    scale,
+    cx,
+    cy,
   }
 }
 
-function drawGrid(ctx: CanvasRenderingContext2D, width: number, height: number, theme: Theme) {
-  const spacing = 32
+/** Round a world step to the nearest 1/2/5 * 10^k so screen spacing stays near the target. */
+function niceStep(raw: number): number {
+  const exponent = Math.floor(Math.log10(raw))
+  const pow = 10 ** exponent
+  const frac = raw / pow
+  const mantissa = frac < Math.SQRT2 ? 1 : frac < Math.sqrt(10) ? 2 : frac < Math.sqrt(50) ? 5 : 10
+  return mantissa * pow
+}
+
+function drawGrid(
+  ctx: CanvasRenderingContext2D,
+  project: Projector,
+  width: number,
+  height: number,
+  theme: Theme,
+) {
+  const { scale, cx, cy, toX, toY } = project
+  const step = niceStep(48 / scale)
+  const left = cx - width / (2 * scale)
+  const right = cx + width / (2 * scale)
+  const bottom = cy - height / (2 * scale)
+  const top = cy + height / (2 * scale)
+
   ctx.strokeStyle = theme.grid
   ctx.lineWidth = 1
   ctx.beginPath()
-  for (let x = spacing; x < width; x += spacing) {
-    ctx.moveTo(Math.round(x) + 0.5, 0)
-    ctx.lineTo(Math.round(x) + 0.5, height)
+  for (let wx = Math.ceil(left / step) * step; wx <= right; wx += step) {
+    const sx = Math.round(toX(wx)) + 0.5
+    ctx.moveTo(sx, 0)
+    ctx.lineTo(sx, height)
   }
-  for (let y = spacing; y < height; y += spacing) {
-    ctx.moveTo(0, Math.round(y) + 0.5)
-    ctx.lineTo(width, Math.round(y) + 0.5)
+  for (let wy = Math.ceil(bottom / step) * step; wy <= top; wy += step) {
+    const sy = Math.round(toY(wy)) + 0.5
+    ctx.moveTo(0, sy)
+    ctx.lineTo(width, sy)
+  }
+  ctx.stroke()
+}
+
+/** World-origin axes (x at y=0, y at x=0), drawn over the grid and behind the chain. */
+function drawAxes(
+  ctx: CanvasRenderingContext2D,
+  project: Projector,
+  width: number,
+  height: number,
+  theme: Theme,
+) {
+  const { scale, cx, cy, toX, toY } = project
+  const left = cx - width / (2 * scale)
+  const right = cx + width / (2 * scale)
+  const bottom = cy - height / (2 * scale)
+  const top = cy + height / (2 * scale)
+
+  ctx.strokeStyle = theme.axis
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  if (left <= 0 && right >= 0) {
+    const sx = Math.round(toX(0))
+    ctx.moveTo(sx, 0)
+    ctx.lineTo(sx, height)
+  }
+  if (bottom <= 0 && top >= 0) {
+    const sy = Math.round(toY(0))
+    ctx.moveTo(0, sy)
+    ctx.lineTo(width, sy)
   }
   ctx.stroke()
 }
@@ -137,7 +199,10 @@ function drawArrow(
 function draw(frameSet: FrameSet, frameIndex: number, ctx: CanvasRenderingContext2D, width: number, height: number, bounds: Bounds, theme: Theme) {
   ctx.fillStyle = theme.bg
   ctx.fillRect(0, 0, width, height)
-  drawGrid(ctx, width, height, theme)
+
+  const project = makeProjector(bounds, width, height)
+  drawGrid(ctx, project, width, height, theme)
+  drawAxes(ctx, project, width, height, theme)
 
   const { frames } = frameSet
   if (frames.length === 0) return
@@ -145,7 +210,6 @@ function draw(frameSet: FrameSet, frameIndex: number, ctx: CanvasRenderingContex
   const pts = frames[index].pts
   if (pts.length === 0) return
 
-  const project = makeProjector(bounds, width, height)
   const screen: [number, number][] = pts.map(([x, y]) => [project.toX(x), project.toY(y)])
 
   // Chain polyline.
