@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   computeAcceleration,
-  computeBendForce,
+  computeBendForces,
   computeLengthForce,
   computeReferenceLength,
   computeSegments,
@@ -20,6 +20,9 @@ const validInput = {
 }
 
 const zeroVel = (N: number): Vec2[] => Array.from({ length: N }, () => [0, 0])
+
+/** Centered RNG: produces a zero jitter offset so initialization stays straight. */
+const plainInit = { random: () => 0.5 }
 
 describe('validateInput', () => {
   it('accepts a valid input', () => {
@@ -59,7 +62,7 @@ describe('initialization (frame 0)', () => {
     }
     const d0 = normalize(input.startDir)
     const d1 = normalize(input.endDir)
-    const frame0 = solve(input, { ...DEFAULT_CONSTANTS, maxIter: 1 }).frames[0]
+    const frame0 = solve(input, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit).frames[0]
 
     // First segment direction == start orientation
     const seg0: Vec2 = [
@@ -87,7 +90,7 @@ describe('initialization (frame 0)', () => {
   })
 
   it('starts with zero velocity (zero KE)', () => {
-    const result = solve(validInput, { ...DEFAULT_CONSTANTS, maxIter: 1 })
+    const result = solve(validInput, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit)
     expect(result.frames[0].ke).toBe(0)
   })
 })
@@ -124,25 +127,28 @@ describe('forces', () => {
     expect(f[1]).toBeCloseTo(0, 12)
   })
 
-  it('bend force pushes the middle point toward the chord (reduces bend)', () => {
+  it('bend forces push the middle point toward the chord (reduces bend)', () => {
     const pts: Vec2[] = [
       [0, 0],
       [1, 0.5],
       [2, 0],
     ]
-    const { unitVecs } = computeSegments(pts)
+    const { lengths, unitVecs } = computeSegments(pts)
     const dotBefore = unitVecs[0][0] * unitVecs[1][0] + unitVecs[0][1] * unitVecs[1][1]
     expect(dotBefore).toBeCloseTo(0.6, 12)
 
-    const f = computeBendForce(1, pts, unitVecs, 1)
-    // direction: (0, -1) scaled by positive magnitude -> moves p1 downward
-    expect(f[1]).toBeLessThan(0)
+    const { prev, cur, next } = computeBendForces(1, lengths, unitVecs, 1)
+    expect(cur[1]).toBeLessThan(0)
+    expect(prev[0]).toBeLessThan(0)
+    expect(next[0]).toBeGreaterThan(0)
+    expect(prev[0] + cur[0] + next[0]).toBeCloseTo(0, 12)
+    expect(prev[1] + cur[1] + next[1]).toBeCloseTo(0, 12)
 
     // One small semi-implicit step (no friction) must increase the dot product.
     const h = 0.001
     const vel = [0, 0] as Vec2
-    vel[0] += h * f[0]
-    vel[1] += h * f[1]
+    vel[0] += h * cur[0]
+    vel[1] += h * cur[1]
     const moved: Vec2[] = [
       [0, 0],
       [pts[1][0] + h * vel[0], pts[1][1] + h * vel[1]],
@@ -163,8 +169,8 @@ describe('forces', () => {
     const L = computeReferenceLength(lengths)
     expect(Number.isNaN(L)).toBe(false)
     const f = computeLengthForce(1, lengths, unitVecs, L, 1)
-    const b = computeBendForce(1, pts, unitVecs, 1)
-    expect([...f, ...b].every(Number.isFinite)).toBe(true)
+    const bend = computeBendForces(1, lengths, unitVecs, 1)
+    expect([...f, ...bend.prev, ...bend.cur, ...bend.next].every(Number.isFinite)).toBe(true)
   })
 })
 
@@ -179,7 +185,11 @@ describe('constraints', () => {
     }
     const d0 = normalize(input.startDir)
     const d1 = normalize(input.endDir)
-    const result = solve(input, { ...DEFAULT_CONSTANTS, epsilon: 1e-12, maxIter: 200 })
+    const result = solve(
+      input,
+      { ...DEFAULT_CONSTANTS, epsilon: 1e-12, maxIter: 200 },
+      plainInit,
+    )
 
     for (const frame of result.frames) {
       const s0: Vec2 = [frame.pts[1][0] - frame.pts[0][0], frame.pts[1][1] - frame.pts[0][1]]
@@ -200,13 +210,13 @@ describe('constraints', () => {
 
 describe('termination', () => {
   it('stops a static chain via KE threshold after muteFrames', () => {
-    const result = solve(validInput, { ...DEFAULT_CONSTANTS, muteFrames: 10, maxIter: 20000 })
+    const result = solve(validInput, { ...DEFAULT_CONSTANTS, muteFrames: 10, maxIter: 20000 }, plainInit)
     expect(result.meta.termination).toBe('ke')
     expect(result.frames.length).toBe(11)
   })
 
   it('respects maxIter when it is reached first', () => {
-    const result = solve(validInput, { ...DEFAULT_CONSTANTS, muteFrames: 1000, maxIter: 5 })
+    const result = solve(validInput, { ...DEFAULT_CONSTANTS, muteFrames: 1000, maxIter: 5 }, plainInit)
     expect(result.meta.termination).toBe('maxIter')
     expect(result.frames.length).toBe(6)
   })
@@ -222,6 +232,7 @@ describe('termination', () => {
     const progress: number[] = []
     const result = solve(input, DEFAULT_CONSTANTS, {
       onProgress: (p) => progress.push(p),
+      ...plainInit,
     })
 
     expect(result.meta.termination).toBe('ke')
@@ -250,7 +261,61 @@ describe('cancellation', () => {
     expect(() =>
       solve(input, { ...DEFAULT_CONSTANTS, maxIter: 20000 }, {
         shouldCancel: () => ++calls > 10,
+        ...plainInit,
       }),
     ).toThrow(CancelledError)
+  })
+})
+
+describe('randomized initialization', () => {
+  const input = {
+    n: 5,
+    start: [0, 0] as Vec2,
+    end: [10, 0] as Vec2,
+    startDir: [1, 0] as Vec2,
+    endDir: [1, 0] as Vec2,
+  }
+
+  it('keeps a straight, equal-length start when the jitter value is centered', () => {
+    const frame = solve(input, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit).frames[0]
+    const { lengths } = computeSegments(frame.pts)
+    for (let i = 1; i < lengths.length; i++) {
+      expect(lengths[i]).toBeCloseTo(lengths[0], 12)
+    }
+    expect(frame.pts.every((p) => p[1] === 0)).toBe(true)
+  })
+
+  it('perturbs interior points perpendicular to the chord and keeps anchors exact', () => {
+    const straight = solve(input, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit).frames[0]
+    const wiggled = solve(input, { ...DEFAULT_CONSTANTS, maxIter: 1 }, { random: () => 1 }).frames[0]
+    const n = input.n
+    expect(wiggled.pts[0]).toEqual(straight.pts[0])
+    expect(wiggled.pts[1]).toEqual(straight.pts[1])
+    expect(wiggled.pts[n]).toEqual(straight.pts[n])
+    expect(wiggled.pts[n + 1]).toEqual(straight.pts[n + 1])
+    for (let k = 2; k < n; k++) {
+      expect(wiggled.pts[k][0]).toBeCloseTo(straight.pts[k][0], 12)
+      expect(Math.abs(wiggled.pts[k][1])).toBeGreaterThan(0)
+    }
+  })
+
+  it('still satisfies orientation constraints on every frame when randomized', () => {
+    const result = solve(
+      input,
+      { ...DEFAULT_CONSTANTS, epsilon: 1e-12, maxIter: 200 },
+      { random: () => 1 },
+    )
+    for (const frame of result.frames) {
+      const s0: Vec2 = [frame.pts[1][0] - frame.pts[0][0], frame.pts[1][1] - frame.pts[0][1]]
+      const N = frame.pts.length
+      const sLast: Vec2 = [
+        frame.pts[N - 1][0] - frame.pts[N - 2][0],
+        frame.pts[N - 1][1] - frame.pts[N - 2][1],
+      ]
+      const n0 = normalize(s0)
+      const nLast = normalize(sLast)
+      expect(n0[1]).toBeCloseTo(0, 10)
+      expect(nLast[1]).toBeCloseTo(0, 10)
+    }
   })
 })

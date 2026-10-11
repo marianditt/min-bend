@@ -97,45 +97,44 @@ export function computeLengthForce(
   return force
 }
 
-/** Bend minimization force on free point k (1 <= k <= n). */
-export function computeBendForce(
+/**
+ * Symmetric bend forces for the joint at free point k (triple p_{k-1}, p_k, p_{k+1}).
+ *
+ * These are the negative gradient of the discrete bend energy
+ *   E_k = kBend * (1 - shat_{k-1}·shat_k)
+ * with respect to each joint point, so the forces sum to zero:
+ *   F_prev = kBend * (c*t0 - t1) / l0     (force on p_{k-1})
+ *   F_next = kBend * (t0 - c*t1) / l1     (force on p_{k+1})
+ *   F_cur  = -(F_prev + F_next)           (force on p_k)
+ * where t0/t1 are the segment unit vectors and c = t0·t1.
+ *
+ * Unlike a force applied only to the middle point, this distributes each joint's
+ * bend out to its free neighbors, so a constrained end joint can pull the
+ * interior off a straight line instead of collapsing toward the anchor.
+ */
+export function computeBendForces(
   k: number,
-  pts: Vec2[],
+  lengths: number[],
   unitVecs: Vec2[],
   kBend: number,
-): Vec2 {
-  // dA = shat_{k-1}, dB = shat_k
-  const dA = unitVecs[k - 1]
-  const dB = unitVecs[k]
+): { prev: Vec2; cur: Vec2; next: Vec2 } {
+  const l0 = lengths[k - 1]
+  const l1 = lengths[k]
+  if (l0 < EPS_STABILIZE || l1 < EPS_STABILIZE) {
+    return { prev: [0, 0], cur: [0, 0], next: [0, 0] }
+  }
 
-  // cosTheta = dA·dB, clamped to [-1, 1]
-  let cosTheta = dot(dA, dB)
-  if (cosTheta > 1) cosTheta = 1
-  else if (cosTheta < -1) cosTheta = -1
+  const t0 = unitVecs[k - 1]
+  const t1 = unitVecs[k]
+  let c = dot(t0, t1)
+  if (c > 1) c = 1
+  else if (c < -1) c = -1
 
-  // magnitude m = kBend * (1 - cosTheta)
-  const m = kBend * (1 - cosTheta)
-  if (m === 0) return [0, 0]
+  const prev = scale(sub(scale(t0, c), t1), kBend / l0)
+  const next = scale(sub(t0, scale(t1, c)), kBend / l1)
+  const cur = scale(add(prev, next), -1)
 
-  // c = p_{k+1} - p_{k-1} (chord)
-  const c = sub(pts[k + 1], pts[k - 1])
-  const cLen = length(c)
-  if (cLen < EPS_STABILIZE) return [0, 0]
-
-  const chat = scale(c, 1 / cLen)
-
-  // delta = cross(chat, p_k - p_{k-1})
-  const pkMinusPk_1 = sub(pts[k], pts[k - 1])
-  const delta = cross(chat, pkMinusPk_1)
-
-  // nhat = -sign(delta) * perp(chat)
-  const signDelta = delta > 0 ? 1 : delta < 0 ? -1 : 0
-  if (signDelta === 0) return [0, 0]
-
-  const nhat = scale(perp(chat), -signDelta)
-
-  // F_bend = m * nhat
-  return scale(nhat, m)
+  return { prev, cur, next }
 }
 
 /** Friction force on free point k. */
@@ -154,16 +153,19 @@ export function computeAcceleration(
   const L = computeReferenceLength(lengths)
 
   const accel: Vec2[] = new Array(pts.length)
-  // Fixed points have zero acceleration
-  accel[0] = [0, 0]
-  accel[pts.length - 1] = [0, 0]
+  for (let i = 0; i < pts.length; i++) accel[i] = [0, 0]
 
   for (let k = 1; k <= n; k++) {
     const fLen = computeLengthForce(k, lengths, unitVecs, L, constants.kLen)
-    const fBend = computeBendForce(k, pts, unitVecs, constants.kBend)
     const fFric = computeFrictionForce(vel[k], constants.gamma)
+    accel[k] = add(add(accel[k], fLen), fFric)
 
-    accel[k] = add(add(fLen, fBend), fFric)
+    // Joint k spans (p_{k-1}, p_k, p_{k+1}); distribute its bend force to the
+    // neighboring free points too (anchors 0 and N-1 absorb their share).
+    const { prev, cur, next } = computeBendForces(k, lengths, unitVecs, constants.kBend)
+    accel[k] = add(accel[k], cur)
+    if (k - 1 >= 1) accel[k - 1] = add(accel[k - 1], prev)
+    if (k + 1 <= n) accel[k + 1] = add(accel[k + 1], next)
   }
 
   return accel

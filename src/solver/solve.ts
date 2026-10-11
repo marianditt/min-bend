@@ -20,10 +20,20 @@ export class CancelledError extends Error {
 export interface SolveOptions {
   onProgress?: (progress: number, iteration: number, ke: number) => void
   shouldCancel?: () => boolean
+  /** Uniform [0,1) source for the initial-pose jitter. Math.random by default. */
+  random?: () => number
 }
 
-/** Initialize points and velocities according to the specification. */
-function initializePoints(input: ProblemInput): { pts: Vec2[]; vel: Vec2[] } {
+/** Initial-pose jitter amplitude, as a fraction of the segment spacing. */
+const INIT_JITTER = 0.15
+
+/**
+ * Initialize points and velocities: a straight chord between the two
+ * orientation-anchored neighbours, with a small perpendicular jitter on the
+ * free interior points so a perfectly straight start (a degenerate
+ * equilibrium for the bend forces) is unlikely.
+ */
+function initializePoints(input: ProblemInput, random: () => number): { pts: Vec2[]; vel: Vec2[] } {
   const { n, start, end, startDir, endDir } = input
   const N = n + 2
 
@@ -48,14 +58,24 @@ function initializePoints(input: ProblemInput): { pts: Vec2[]; vel: Vec2[] } {
   vel[1] = [0, 0]
   vel[n] = [0, 0]
 
-  // Interior free points: p_k = p_1 + ((k-1)/(n-1)) * (p_n - p_1)
+  // Interior free points: p_k = p_1 + ((k-1)/(n-1)) * (p_n - p_1), with a
+  // small perpendicular jitter unless the anchoring chord is degenerate.
   const p1 = pts[1]
   const pn = pts[n]
   const dp = [pn[0] - p1[0], pn[1] - p1[1]]
+  const dpLen = Math.hypot(dp[0], dp[1])
+  const perp: Vec2 | null = dpLen >= EPS_STABILIZE ? [-dp[1] / dpLen, dp[0] / dpLen] : null
 
   for (let k = 2; k < n; k++) {
     const t = (k - 1) / (n - 1)
-    pts[k] = [p1[0] + t * dp[0], p1[1] + t * dp[1]]
+    let x = p1[0] + t * dp[0]
+    let y = p1[1] + t * dp[1]
+    if (perp) {
+      const amp = INIT_JITTER * o * (2 * random() - 1)
+      x += amp * perp[0]
+      y += amp * perp[1]
+    }
+    pts[k] = [x, y]
     vel[k] = [0, 0]
   }
 
@@ -115,13 +135,13 @@ export function solve(
     throw new Error(`Invalid input: ${issues.map((i) => i.message).join('; ')}`)
   }
 
-  const { onProgress, shouldCancel } = options
+  const { onProgress, shouldCancel, random = Math.random } = options
   const { n, startDir, endDir } = input
   const N = n + 2
   const { h, epsilon, muteFrames, maxIter } = constants
 
   // Initialize
-  const { pts, vel } = initializePoints(input)
+  const { pts, vel } = initializePoints(input, random)
 
   // Record initial frame (i = 0)
   const frames: Frame[] = []
