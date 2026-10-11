@@ -43,7 +43,7 @@ interface ConstantSpec {
 }
 
 const CONSTANT_SPECS: ConstantSpec[] = [
-  { key: 'kLen', label: 'Segment stiffness', hint: 'length-error penalty', step: 0.1, min: 0 },
+  { key: 'kLen', label: 'Segment stiffness', hint: 'length-error penalty', step: 1, min: 0 },
   { key: 'kBend', label: 'Bend stiffness', hint: 'curvature penalty', step: 0.1, min: 0 },
   { key: 'gamma', label: 'Friction γ', hint: 'velocity damping', step: 0.05, min: 0 },
   { key: 'h', label: 'Step size', hint: 'integration dt', step: 0.005, min: 0 },
@@ -71,6 +71,13 @@ const CONSTANT_SPECS: ConstantSpec[] = [
     integer: true,
     min: 1,
   },
+  {
+    key: 'maxForce',
+    label: 'Max force',
+    hint: 'per-point force cap',
+    step: 100,
+    min: 0,
+  },
 ]
 
 function formatEnergy(ke: number): string {
@@ -91,6 +98,7 @@ function constantProblem(c: PhysicsConstants): string | null {
     ['KE threshold', c.epsilon],
     ['Settle frames', c.settleFrames],
     ['Max iterations', c.maxIter],
+    ['Max force', c.maxForce],
   ]
   for (const [name, value] of named) {
     if (!Number.isFinite(value)) return `${name} must be a finite number.`
@@ -101,6 +109,7 @@ function constantProblem(c: PhysicsConstants): string | null {
   if (c.epsilon < 0) return 'KE threshold must be ≥ 0.'
   if (c.settleFrames < 1) return 'Settle frames must be ≥ 1.'
   if (c.maxIter < 1) return 'Max iterations must be ≥ 1.'
+  if (!(c.maxForce > 0)) return 'Max force must be > 0.'
   return null
 }
 

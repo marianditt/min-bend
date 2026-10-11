@@ -250,4 +250,5 @@
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
+  .advanced__grid { grid-template-columns: 1fr; }
 }
