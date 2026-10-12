@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Frame, FrameSet } from '../solver/types'
 import { curveColor, usePrefersDark } from './canvasKit'
+import { PLOT_DARK, PLOT_LIGHT } from './plotTheme'
 
 export interface CoordinatePlotProps {
   frameSet: FrameSet
@@ -16,21 +17,9 @@ interface PlotTheme {
   bg: string
 }
 
-const LIGHT_THEME: PlotTheme = {
-  grid: 'rgba(20, 25, 35, 0.07)',
-  axis: 'rgba(20, 25, 35, 0.16)',
-  zero: 'rgba(20, 25, 35, 0.4)',
-  label: '#5a6472',
-  bg: '#eceef3',
-}
+const LIGHT_THEME: PlotTheme = { ...PLOT_LIGHT, zero: 'rgba(20, 25, 35, 0.4)' }
 
-const DARK_THEME: PlotTheme = {
-  grid: 'rgba(255, 255, 255, 0.07)',
-  axis: 'rgba(255, 255, 255, 0.16)',
-  zero: 'rgba(255, 255, 255, 0.4)',
-  label: '#99a2b1',
-  bg: '#090b0e',
-}
+const DARK_THEME: PlotTheme = { ...PLOT_DARK, zero: 'rgba(255, 255, 255, 0.4)' }
 
 const PAD = { left: 10, right: 10, top: 14, bottom: 14 }
 

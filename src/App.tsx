@@ -5,14 +5,7 @@ import { Player } from './player/Player'
 import { Sidebar } from './ui/Sidebar'
 import { PoseEditor } from './ui/PoseEditor'
 import type { PhysicsConstants, Setup } from './solver/types'
-
-function formatEnergy(ke: number): string {
-  if (!Number.isFinite(ke)) return '—'
-  if (ke === 0) return '0'
-  const abs = Math.abs(ke)
-  if (abs >= 0.01 && abs < 1e4) return ke.toFixed(3)
-  return ke.toExponential(2)
-}
+import { formatEnergy } from './lib/format'
 
 function MarkIcon() {
   return (

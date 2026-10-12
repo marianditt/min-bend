@@ -7,7 +7,6 @@ import {
   addCurve,
   addFixPoint,
   clearSpan,
-  freeSlotCount,
   moveFix,
   removeCurve,
   removeFixPoint,
@@ -15,6 +14,8 @@ import {
   setFixOrientation,
   setFixOrientationComponent,
 } from './setupEdits'
+import { freeSlotCount } from '../solver/curve'
+import { formatEnergy } from '../lib/format'
 import './sidebar.css'
 
 export interface SidebarProps {
@@ -53,14 +54,6 @@ const CONSTANT_SPECS: ConstantSpec[] = [
   { key: 'maxIter', label: 'Max iterations', hint: 'safety cap', step: 500, integer: true, min: 1 },
   { key: 'maxForce', label: 'Max force', hint: 'per-point force cap', step: 100, min: 0 },
 ]
-
-function formatEnergy(ke: number): string {
-  if (!Number.isFinite(ke)) return '—'
-  if (ke === 0) return '0'
-  const abs = Math.abs(ke)
-  if (abs >= 0.01 && abs < 1e4) return ke.toFixed(3)
-  return ke.toExponential(2)
-}
 
 /** Returns a human message when the constants are unusable, else null. */
 function constantProblem(c: PhysicsConstants): string | null {

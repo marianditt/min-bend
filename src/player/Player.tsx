@@ -4,6 +4,7 @@ import type { FrameSet } from '../solver/types'
 import { FrameCanvas } from './FrameCanvas'
 import { SegmentPlot } from './SegmentPlot'
 import { CoordinatePlot } from './CoordinatePlot'
+import { formatEnergy } from '../lib/format'
 import './player.css'
 
 export interface PlayerProps {
@@ -16,14 +17,6 @@ const MAX_SPEED = 16
 
 function formatSpeed(value: number): string {
   return `${Number(value.toFixed(2))}×`
-}
-
-function formatEnergy(ke: number): string {
-  if (!Number.isFinite(ke)) return '—'
-  if (ke === 0) return '0'
-  const abs = Math.abs(ke)
-  if (abs >= 0.01 && abs < 1e4) return ke.toFixed(3)
-  return ke.toExponential(2)
 }
 
 function PlayIcon() {

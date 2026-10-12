@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Curve, FrameSet } from '../solver/types'
+import { fixIndices } from '../solver/curve'
 import { boundsForScale, fitScale, nextDisplayedScale, type Bounds, type EasePhase } from './scaleEase'
 import {
   type Theme,
@@ -21,13 +22,6 @@ export interface FrameCanvasProps {
 }
 
 const EMPTY_CURVE: Curve = { fixPoints: [], n: 0, spans: [] }
-
-function fixIndices(curve: Curve): number[] {
-  const n = Math.max(0, Math.floor(curve.n))
-  const indices: number[] = []
-  for (let i = 0; i < curve.fixPoints.length; i += 1) indices.push(i * (n + 1))
-  return indices
-}
 
 function draw(
   frameSet: FrameSet,

@@ -1,4 +1,5 @@
 import type { Curve, FixPoint, Setup, Vec2 } from '../solver/types'
+import { freeSlotCount } from '../solver/curve'
 
 /** Deep clone a setup so edits stay immutable. */
 export function cloneSetup(setup: Setup): Setup {
@@ -16,25 +17,6 @@ export function createCurve(offsetX: number): Curve {
     fixPoints: [createFixPoint([offsetX, 0]), createFixPoint([offsetX + 4, 0])],
     spans: [[]],
   }
-}
-
-/** Interior slots (1..n) that are editable, i.e. not bound by an oriented fix point. */
-export function freeSlotIndices(curve: Curve, si: number): number[] {
-  const n = Math.max(0, Math.floor(curve.n))
-  const startBound = curve.fixPoints[si]?.orientation != null
-  const endBound = curve.fixPoints[si + 1]?.orientation != null
-  const slots: number[] = []
-  for (let k = 1; k <= n; k++) {
-    if (startBound && k === 1) continue
-    if (endBound && k === n) continue
-    slots.push(k)
-  }
-  return slots
-}
-
-/** How many free interior points a span can still accept. */
-export function freeSlotCount(curve: Curve, si: number): number {
-  return freeSlotIndices(curve, si).length
 }
 
 export function addCurve(setup: Setup): Setup {

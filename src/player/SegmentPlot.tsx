@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { computeSegments } from '../solver/forces'
 import type { Frame, FrameSet, Vec2 } from '../solver/types'
 import { usePrefersDark } from './canvasKit'
+import { PLOT_DARK, PLOT_LIGHT } from './plotTheme'
 
 export interface SegmentPlotProps {
   frameSet: FrameSet
@@ -18,23 +19,9 @@ interface PlotTheme {
   bg: string
 }
 
-const LIGHT_THEME: PlotTheme = {
-  grid: 'rgba(20, 25, 35, 0.07)',
-  axis: 'rgba(20, 25, 35, 0.16)',
-  length: '#3563e9',
-  bend: '#b45309',
-  label: '#5a6472',
-  bg: '#eceef3',
-}
+const LIGHT_THEME: PlotTheme = { ...PLOT_LIGHT, length: '#3563e9', bend: '#b45309' }
 
-const DARK_THEME: PlotTheme = {
-  grid: 'rgba(255, 255, 255, 0.07)',
-  axis: 'rgba(255, 255, 255, 0.16)',
-  length: '#7aa2ff',
-  bend: '#fbbf24',
-  label: '#99a2b1',
-  bg: '#090b0e',
-}
+const DARK_THEME: PlotTheme = { ...PLOT_DARK, length: '#7aa2ff', bend: '#fbbf24' }
 
 const MIN_VEC = 1e-6
 const PAD = { left: 10, right: 10, top: 16, bottom: 14 }

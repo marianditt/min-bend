@@ -10,6 +10,7 @@ import {
   verifyFinite,
 } from './forces'
 import { createFrameBuffer } from './frameBuffer'
+import { freeSlotsFor } from './curve'
 
 /** Thrown by solve() when shouldCancel() returns true. */
 export class CancelledError extends Error {
@@ -109,20 +110,6 @@ function reassembleCurve(spans: SpanState[], range: CurveRange): Vec2[] {
     for (let k = from; k < pts.length; k++) out.push([pts[k][0], pts[k][1]])
   }
   return out
-}
-
-/**
- * Interior slot indices that the user may place, i.e. all slots minus the bound
- * slots adjacent to an oriented fix point.
- */
-function freeSlots(n: number, hasStart: boolean, hasEnd: boolean): number[] {
-  const slots: number[] = []
-  for (let k = 1; k <= n; k++) {
-    if (hasStart && k === 1) continue
-    if (hasEnd && k === n) continue
-    slots.push(k)
-  }
-  return slots
 }
 
 /** Fill unset interior slots by repeatedly splitting the largest spatial gap. */
@@ -227,7 +214,7 @@ function computeSpanBase(spec: SpanSpec, random: () => number): Vec2[] {
   }
 
   if (free.length > 0) {
-    const slots = freeSlots(n, hasStart, hasEnd)
+    const slots = freeSlotsFor(n, hasStart, hasEnd)
     const k = Math.min(free.length, slots.length)
     for (let j = 0; j < k; j++) pts[slots[j]] = [free[j][0], free[j][1]]
     const unset = slots.slice(k)

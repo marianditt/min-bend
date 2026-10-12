@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import type { Curve, Setup, Vec2 } from '../solver/types'
+import type { Setup, Vec2 } from '../solver/types'
 import { previewPose } from '../solver/solve'
+import { fixIndices, freeSlotIndices } from '../solver/curve'
 import {
   type Theme,
   LIGHT_THEME,
@@ -14,7 +15,7 @@ import {
   usePrefersDark,
 } from '../player/canvasKit'
 import type { Bounds } from '../player/canvasKit'
-import { addFreePoint, clearSpan, freeSlotIndices, removeLastFreePoint } from './setupEdits'
+import { addFreePoint, clearSpan, removeLastFreePoint } from './setupEdits'
 import './poseEditor.css'
 
 export interface PoseEditorProps {
@@ -59,15 +60,6 @@ function makeViewProjector(bounds: Bounds, width: number, height: number, view: 
     worldX: (sx) => base.cx + (sx - width / 2 - view.x) / scale,
     worldY: (sy) => base.cy - (sy - height / 2 - view.y) / scale,
   }
-}
-
-/** Global index of each fix point within a curve's reassembled polyline. */
-function fixIndices(curve: Curve): number[] {
-  const n = Math.max(0, Math.floor(curve.n))
-  const indices: number[] = []
-  const count = curve.fixPoints.length
-  for (let i = 0; i < count; i++) indices.push(i * (n + 1))
-  return indices
 }
 
 function screenPoints(pts: Vec2[], project: ViewProjector): [number, number][] {
