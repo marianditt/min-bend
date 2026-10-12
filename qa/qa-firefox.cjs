@@ -108,6 +108,36 @@ function check(name, cond, extra = '') {
     }
     await page.screenshot({ path: shot('qa-2b-editor.png') })
 
+    // --- Per-curve target path length (optional constraint) ---
+    const targetSwitch = page
+      .locator('.curve-card')
+      .first()
+      .locator('label.switch', { hasText: 'Constrain path length' })
+      .locator('input')
+    check(
+      'Target length: switch present and off',
+      (await targetSwitch.count()) === 1 && !(await targetSwitch.isChecked()),
+    )
+    const targetField = () =>
+      page.locator('.curve-card').first().locator('.field', { hasText: 'Target path length' }).locator('input').first()
+    check('Target length: field hidden while off', (await targetField().count()) === 0)
+    await targetSwitch.check()
+    await page.waitForTimeout(150)
+    check('Target length: field appears when enabled', (await targetField().count()) === 1)
+    const prefilled = await targetField().inputValue()
+    check('Target length: prefilled with a positive length', Number(prefilled) > 0, `prefill=${prefilled}`)
+    await targetField().fill('0')
+    await page.waitForTimeout(200)
+    check('Target length: zero flagged invalid', (await targetField().getAttribute('aria-invalid')) === 'true')
+    check('Target length: Compute disabled while invalid', !(await computeBtn.isEnabled()))
+    await targetField().fill('20')
+    await page.waitForTimeout(200)
+    check('Target length: Compute re-enabled', await computeBtn.isEnabled())
+    await page.screenshot({ path: shot('qa-2c-target.png') })
+    await targetSwitch.uncheck()
+    await page.waitForTimeout(150)
+    check('Target length: field hidden when disabled', (await targetField().count()) === 0)
+
     // --- Default compute -> success ---
     await computeBtn.click()
     const sawRunning = await page
