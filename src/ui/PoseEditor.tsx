@@ -487,34 +487,36 @@ export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: Po
       </div>
 
       <div className="pose-editor__bar">
-        <button type="button" className="btn btn--sm pose-editor__action" data-action="undo" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={onUndo}>
-          <UndoIcon /> Undo
-        </button>
-        <button type="button" className="btn btn--sm pose-editor__action" data-action="redo" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={onRedo}>
-          <RedoIcon /> Redo
-        </button>
-        <button
-          type="button"
-          className="btn btn--sm pose-editor__action"
-          data-action="clear"
-          title="Clear the active span's free points"
-          disabled={placed === 0}
-          onClick={() => edit((s) => clearSpan(s, activeCurve, activeSpan))}
-        >
-          <TrashIcon /> Clear span
-        </button>
+        <div className="pose-editor__actions" role="group" aria-label="Edit history">
+          <button type="button" className="btn btn--sm pose-editor__action" data-action="undo" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={onUndo}>
+            <UndoIcon /> Undo
+          </button>
+          <button type="button" className="btn btn--sm pose-editor__action" data-action="redo" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={onRedo}>
+            <RedoIcon /> Redo
+          </button>
+          <button
+            type="button"
+            className="btn btn--sm pose-editor__action"
+            data-action="clear"
+            title="Clear the active span's free points"
+            disabled={placed === 0}
+            onClick={() => edit((s) => clearSpan(s, activeCurve, activeSpan))}
+          >
+            <TrashIcon /> Clear span
+          </button>
+        </div>
 
-        <div className="pose-editor__spacer" />
-
-        <button type="button" className="btn btn--sm" data-action="zoom-out" title="Zoom out" onClick={() => zoomBy(1 / 1.25)}>
-          −
-        </button>
-        <button type="button" className="btn btn--sm" data-action="zoom-reset" title="Reset zoom" onClick={resetView}>
-          Reset view
-        </button>
-        <button type="button" className="btn btn--sm" data-action="zoom-in" title="Zoom in" onClick={() => zoomBy(1.25)}>
-          +
-        </button>
+        <div className="pose-editor__zoom" role="group" aria-label="View zoom">
+          <button type="button" className="btn btn--sm" data-action="zoom-out" aria-label="Zoom out" title="Zoom out" onClick={() => zoomBy(1 / 1.25)}>
+            −
+          </button>
+          <button type="button" className="btn btn--sm" data-action="zoom-reset" title="Reset zoom" onClick={resetView}>
+            Reset view
+          </button>
+          <button type="button" className="btn btn--sm" data-action="zoom-in" aria-label="Zoom in" title="Zoom in" onClick={() => zoomBy(1.25)}>
+            +
+          </button>
+        </div>
       </div>
     </div>
   )

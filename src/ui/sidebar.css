@@ -282,6 +282,48 @@
   font-weight: 640;
 }
 
+.curve-card__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.curve-card__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.curve-card__chevron {
+  flex: none;
+  color: var(--text-faint);
+  transition: transform var(--dur) var(--ease);
+}
+
+.curve-card__toggle[aria-expanded='false'] .curve-card__chevron {
+  transform: rotate(-90deg);
+}
+
+.curve-card__summary {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.curve-card.is-collapsed > *:not(.curve-card__head) {
+  display: none;
+}
+
 .fix-list {
   display: flex;
   flex-direction: column;

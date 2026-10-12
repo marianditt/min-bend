@@ -134,7 +134,16 @@ export function Sidebar({
   onConstantsChange,
 }: SidebarProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const running = status === 'running'
+
+  const toggleCollapsed = (index: number) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
 
   const issues = useMemo(() => validateSetup(setup), [setup])
   const byField = useMemo(() => {
@@ -170,9 +179,24 @@ export function Sidebar({
         </div>
 
         {setup.curves.map((curve, ci) => (
-          <div className="curve-card" key={ci}>
+          <div className={`curve-card ${collapsed.has(ci) ? 'is-collapsed' : ''}`} key={ci}>
             <div className="curve-card__head">
-              <span className="curve-card__title">Curve {ci + 1}</span>
+              <button
+                type="button"
+                className="curve-card__toggle"
+                aria-expanded={!collapsed.has(ci)}
+                onClick={() => toggleCollapsed(ci)}
+              >
+                <svg className="curve-card__chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="curve-card__title">Curve {ci + 1}</span>
+                {collapsed.has(ci) ? (
+                  <span className="curve-card__summary">
+                    {curve.fixPoints.length} fix · n {curve.n}
+                  </span>
+                ) : null}
+              </button>
               <button
                 type="button"
                 className="btn btn--ghost btn--sm"

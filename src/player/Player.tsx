@@ -233,22 +233,35 @@ export function Player({ frameSet }: PlayerProps) {
         </div>
       </div>
 
-      {curveCount > 1 ? (
-        <div className="chip-row chip-row--view" role="tablist" aria-label="Curve to plot">
-          {Array.from({ length: curveCount }, (_, ci) => (
-            <button
-              key={ci}
-              type="button"
-              role="tab"
-              aria-selected={ci === safeCurve}
-              className={`chip chip--sm ${ci === safeCurve ? 'is-active' : ''}`}
-              onClick={() => setCurveIndex(ci)}
-            >
-              Curve {ci + 1}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <div className="player__viewbar">
+        {curveCount > 1 ? (
+          <div className="chip-row chip-row--view" role="tablist" aria-label="Curve to plot">
+            {Array.from({ length: curveCount }, (_, ci) => (
+              <button
+                key={ci}
+                type="button"
+                role="tab"
+                aria-selected={ci === safeCurve}
+                className={`chip chip--sm ${ci === safeCurve ? 'is-active' : ''}`}
+                onClick={() => setCurveIndex(ci)}
+              >
+                Curve {ci + 1}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        <button
+          type="button"
+          className={`btn btn--icon ${split ? 'is-on' : ''}`}
+          onClick={() => setSplit((prev) => !prev)}
+          aria-pressed={split}
+          aria-label="Split x and y coordinates"
+          title={split ? 'Combined view' : 'Split x / y view'}
+        >
+          <SplitIcon />
+        </button>
+      </div>
 
       <div className="player__stage">
         {split ? (
@@ -311,17 +324,6 @@ export function Player({ frameSet }: PlayerProps) {
               +
             </button>
           </div>
-
-          <button
-            type="button"
-            className={`btn btn--icon ${split ? 'is-on' : ''}`}
-            onClick={() => setSplit((prev) => !prev)}
-            aria-pressed={split}
-            aria-label="Split x and y coordinates"
-            title={split ? 'Combined view' : 'Split x / y view'}
-          >
-            <SplitIcon />
-          </button>
 
           <button
             type="button"

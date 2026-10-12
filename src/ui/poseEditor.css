@@ -63,6 +63,31 @@
   flex-wrap: wrap;
 }
 
+.pose-editor__actions,
+.pose-editor__zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.pose-editor__zoom {
+  margin-left: auto;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+.pose-editor__zoom .btn {
+  border-color: transparent;
+  background: transparent;
+}
+
+.pose-editor__zoom .btn:hover:not(:disabled) {
+  background: var(--bg-sunken);
+}
+
 .pose-editor__action {
   gap: var(--space-1);
 }
@@ -73,10 +98,6 @@
   gap: var(--space-2);
 }
 
-.pose-editor__spacer {
-  flex: 1;
-}
-
 @media (max-width: 520px) {
   .pose-editor {
     padding: var(--space-3);
@@ -84,5 +105,21 @@
 
   .pose-editor__canvas {
     min-height: 220px;
+  }
+
+  .pose-editor__bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+
+  .pose-editor__actions,
+  .pose-editor__zoom {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .pose-editor__zoom {
+    margin-left: 0;
   }
 }

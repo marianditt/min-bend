@@ -451,6 +451,16 @@ describe('free interior points', () => {
     }
   })
 
+  it('spreads leftover points across the widest gaps, including gaps between drawn points', () => {
+    const setup = setup1(4, [0, 0], [10, 0], null, null, [
+      [1, 0],
+      [9, 0],
+    ])
+    const p = pts(solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit).frames[0])
+
+    expect(p.map((q) => q[0])).toEqual([0, 1, 3, 5, 9, 10])
+  })
+
   it('matches the reference chord layout when no free points are provided', () => {
     const setup = setup1(5, [0, 0], [10, 0], [1, 0], [1, 0])
     const p = pts(solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit).frames[0])

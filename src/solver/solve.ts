@@ -112,42 +112,10 @@ function reassembleCurve(spans: SpanState[], range: CurveRange): Vec2[] {
   return out
 }
 
-/** Fill unset interior slots by repeatedly splitting the largest spatial gap. */
-function gapFill(pts: Vec2[], unsetSlots: number[]): void {
-  const unset = new Set(unsetSlots)
-  const known: number[] = []
-  for (let k = 0; k < pts.length; k++) if (!unset.has(k)) known.push(k)
-  const remaining = [...unsetSlots].sort((x, y) => x - y)
-
-  while (remaining.length > 0) {
-    known.sort((x, y) => x - y)
-    let bestGap = -1
-    let bestPair = -1
-    for (let g = 0; g + 1 < known.length; g++) {
-      const k1 = known[g]
-      const k2 = known[g + 1]
-      if (!remaining.some((s) => s > k1 && s < k2)) continue
-      const dist = Math.hypot(pts[k2][0] - pts[k1][0], pts[k2][1] - pts[k1][1])
-      if (dist > bestGap) {
-        bestGap = dist
-        bestPair = g
-      }
-    }
-    if (bestPair < 0) break
-    const k1 = known[bestPair]
-    const k2 = known[bestPair + 1]
-    const between = remaining.filter((s) => s > k1 && s < k2)
-    const slot = between[Math.floor((between.length - 1) / 2)]
-    pts[slot] = [(pts[k1][0] + pts[k2][0]) / 2, (pts[k1][1] + pts[k2][1]) / 2]
-    known.push(slot)
-    remaining.splice(remaining.indexOf(slot), 1)
-  }
-}
-
 /**
  * Deterministic (no-jitter) layout for one span. Generalizes the original
  * single-chain layout to optional end orientations:
- *   - user free points occupy the free slots in order, remainder gap-filled;
+ *   - user free points occupy the free slots; leftover slots split the widest gap;
  *   - otherwise a chord layout is used, or a circular layout when the anchors
  *     coincide (D < EPS_STABILIZE);
  *   - an n = 1 span bound at both ends is left to the orientation projection.
@@ -216,9 +184,23 @@ function computeSpanBase(spec: SpanSpec, random: () => number): Vec2[] {
   if (free.length > 0) {
     const slots = freeSlotsFor(n, hasStart, hasEnd)
     const k = Math.min(free.length, slots.length)
-    for (let j = 0; j < k; j++) pts[slots[j]] = [free[j][0], free[j][1]]
-    const unset = slots.slice(k)
-    if (unset.length > 0) gapFill(pts, unset)
+    const leftAnchor: Vec2 = hasStart ? pts[1] : pts[0]
+    const rightAnchor: Vec2 = hasEnd ? pts[n] : pts[n + 1]
+    const seq: Vec2[] = [leftAnchor, ...free.slice(0, k).map((p): Vec2 => [p[0], p[1]]), rightAnchor]
+    // Split the widest gap (including between drawn points) one point at a time.
+    while (seq.length - 2 < slots.length) {
+      let best = 0
+      let bestLen = -1
+      for (let i = 0; i < seq.length - 1; i++) {
+        const len = Math.hypot(seq[i + 1][0] - seq[i][0], seq[i + 1][1] - seq[i][1])
+        if (len > bestLen) {
+          bestLen = len
+          best = i
+        }
+      }
+      seq.splice(best + 1, 0, [(seq[best][0] + seq[best + 1][0]) / 2, (seq[best][1] + seq[best + 1][1]) / 2])
+    }
+    for (let j = 0; j < slots.length; j++) pts[slots[j]] = seq[j + 1]
     return pts
   }
 
