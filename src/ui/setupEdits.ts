@@ -44,6 +44,15 @@ export function setCurveN(setup: Setup, ci: number, n: number): Setup {
   return next
 }
 
+export function setCurveTargetLength(setup: Setup, ci: number, value: number | null): Setup {
+  const curve = setup.curves[ci]
+  if (!curve) return setup
+  if ((curve.targetLength ?? null) === value) return setup
+  const next = cloneSetup(setup)
+  next.curves[ci].targetLength = value
+  return next
+}
+
 export function addFixPoint(setup: Setup, ci: number): Setup {
   const curve = setup.curves[ci]
   if (!curve) return setup

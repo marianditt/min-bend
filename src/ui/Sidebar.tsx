@@ -11,10 +11,12 @@ import {
   removeCurve,
   removeFixPoint,
   setCurveN,
+  setCurveTargetLength,
   setFixOrientation,
   setFixOrientationComponent,
 } from './setupEdits'
 import { freeSlotCount } from '../solver/curve'
+import { previewPose } from '../solver/solve'
 import { formatEnergy } from '../lib/format'
 import './sidebar.css'
 
@@ -78,6 +80,16 @@ function constantProblem(c: PhysicsConstants): string | null {
   if (c.maxIter < 1) return 'Max iterations must be ≥ 1.'
   if (!(c.maxForce > 0)) return 'Max force must be > 0.'
   return null
+}
+
+function curvePreviewLength(setup: Setup, ci: number): number {
+  const poly = previewPose(setup)[ci]
+  if (!poly || poly.length < 2) return 0
+  let total = 0
+  for (let i = 0; i + 1 < poly.length; i++) {
+    total += Math.hypot(poly[i + 1][0] - poly[i][0], poly[i + 1][1] - poly[i][1])
+  }
+  return Math.round(total * 100) / 100
 }
 
 function VecInput({
@@ -194,6 +206,7 @@ export function Sidebar({
                 {collapsed.has(ci) ? (
                   <span className="curve-card__summary">
                     {curve.fixPoints.length} fix · n {curve.n}
+                    {curve.targetLength != null ? ` · L ${curve.targetLength}` : ''}
                   </span>
                 ) : null}
               </button>
@@ -219,6 +232,39 @@ export function Sidebar({
               error={byField.get(`n:${ci}`) ?? null}
               onChange={(value) => onEdit((s) => setCurveN(s, ci, value))}
             />
+
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={curve.targetLength != null}
+                disabled={running || curve.n === 0}
+                title={
+                  curve.n === 0
+                    ? 'Add interior points (n > 0) to constrain path length'
+                    : 'Aim the sum of all segment lengths at a target'
+                }
+                onChange={(event) => {
+                  const enabled = event.target.checked
+                  onEdit((s) =>
+                    setCurveTargetLength(s, ci, enabled ? curvePreviewLength(s, ci) : null),
+                  )
+                }}
+              />
+              <span>Constrain path length</span>
+            </label>
+
+            {curve.targetLength != null ? (
+              <NumberField
+                label="Target path length"
+                hint="sum of all segments"
+                value={curve.targetLength}
+                step={1}
+                min={0}
+                disabled={running}
+                error={byField.get(`targetLength:${ci}`) ?? null}
+                onChange={(value) => onEdit((s) => setCurveTargetLength(s, ci, value))}
+              />
+            ) : null}
 
             {byField.get(`fixPoints:${ci}`) ? (
               <p className="group__error" role="alert">{byField.get(`fixPoints:${ci}`)}</p>
