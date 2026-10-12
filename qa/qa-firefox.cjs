@@ -322,6 +322,30 @@ function check(name, cond, extra = '') {
     await page.waitForSelector('.pose-editor')
     check('Create-from-frame: returns to the editor', await page.isVisible('.pose-editor'))
     check('Create-from-frame: appended a curve', (await page.locator('.curve-card').count()) === 3)
+    const srcN = Number(
+      await page
+        .locator('.curve-card')
+        .first()
+        .locator('.field', { hasText: 'Interior points per span' })
+        .locator('input')
+        .first()
+        .inputValue(),
+    )
+    const srcFix = await page.locator('.curve-card').first().locator('.fix-item').count()
+    const expectedPts = (srcFix - 1) * (srcN + 1) + 1
+    const newCard = page.locator('.curve-card').nth(2)
+    const newN = await newCard
+      .locator('.field', { hasText: 'Interior points per span' })
+      .locator('input')
+      .first()
+      .inputValue()
+    const newFix = await newCard.locator('.fix-item').count()
+    check('Create-from-frame: new curve is fully fixed (n = 0)', newN === '0', `n=${newN}`)
+    check(
+      'Create-from-frame: fix points equal the copied polyline length',
+      newFix === expectedPts,
+      `new=${newFix} expected=${expectedPts}`,
+    )
     await page.screenshot({ path: shot('qa-9-fromframe.png') })
 
     // --- Slow compute -> cancel ---

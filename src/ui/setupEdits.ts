@@ -1,5 +1,5 @@
 import type { Curve, FixPoint, Setup, Vec2 } from '../solver/types'
-import { freeSlotCount, freeSlotsFor } from '../solver/curve'
+import { freeSlotCount } from '../solver/curve'
 
 /** Deep clone a setup so edits stay immutable. */
 export function cloneSetup(setup: Setup): Setup {
@@ -154,39 +154,23 @@ export function toggleCurveHidden(setup: Setup, ci: number): Setup {
 }
 
 /**
- * Bake a solved polyline into a fresh curve that mirrors the source's
- * structure (fix points, orientations, n and any target length) while taking
- * every position from the solved frame. Only the free interior slots of each
- * span are stored, since bound slots are re-derived by the solver.
+ * Turn a solved frame's curve polyline into a fresh, fully rigid curve: every
+ * point becomes a fix point and `n` is 0, so rendering the result with no
+ * interior points reproduces the copied shape exactly. Source fix points keep
+ * their tangents; points that were interior in the source get no orientation.
  */
 export function curveFromPolyline(source: Curve, poly: Vec2[]): Curve {
-  const n = Math.max(0, Math.floor(source.n))
-  const stride = n + 1
-  const fixPoints = source.fixPoints.map((fp, pi): FixPoint => {
-    const p = poly[pi * stride]
-    return {
-      pos: p ? [p[0], p[1]] : [fp.pos[0], fp.pos[1]],
-      orientation: fp.orientation ? [fp.orientation[0], fp.orientation[1]] : null,
-    }
+  const stride = Math.max(1, Math.floor(source.n) + 1)
+  const tangents = new Map<number, Vec2>()
+  source.fixPoints.forEach((fp, pi) => {
+    if (fp.orientation) tangents.set(pi * stride, fp.orientation)
   })
-  const spans: Vec2[][] = []
-  for (let s = 0; s + 1 < fixPoints.length; s++) {
-    const slots = freeSlotsFor(
-      n,
-      fixPoints[s].orientation != null,
-      fixPoints[s + 1].orientation != null,
-    )
-    const base = s * stride
-    spans.push(
-      slots.map((k): Vec2 => {
-        const p = poly[base + k]
-        return p ? [p[0], p[1]] : [0, 0]
-      }),
-    )
-  }
-  const curve: Curve = { fixPoints, n, spans }
-  if (source.targetLength != null) curve.targetLength = source.targetLength
-  return curve
+  const fixPoints: FixPoint[] = poly.map((p, i) => {
+    const tangent = tangents.get(i)
+    return { pos: [p[0], p[1]], orientation: tangent ? [tangent[0], tangent[1]] : null }
+  })
+  const spans = fixPoints.slice(0, -1).map((): Vec2[] => [])
+  return { fixPoints, n: 0, spans }
 }
 
 export function appendBakedCurve(setup: Setup, poly: Vec2[], source: Curve): Setup {

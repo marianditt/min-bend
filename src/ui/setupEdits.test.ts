@@ -26,75 +26,51 @@ describe('toggleCurveHidden', () => {
 })
 
 describe('curveFromPolyline', () => {
-  it('bakes fix points and free interior slots, preserving structure', () => {
-    const source: Curve = { ...curve(3, [null, null]), targetLength: 9 }
-    const poly: Vec2[] = [
-      [10, 1],
-      [11, 2],
-      [12, 3],
-      [13, 4],
-      [20, 5],
-    ]
-    const baked = curveFromPolyline(source, poly)
-    expect(baked.n).toBe(3)
-    expect(baked.fixPoints).toEqual([
-      { pos: [10, 1], orientation: null },
-      { pos: [20, 5], orientation: null },
-    ])
-    expect(baked.spans).toEqual([[[11, 2], [12, 3], [13, 4]]])
-    expect(baked.targetLength).toBe(9)
-    expect(baked.hidden).toBeUndefined()
+  const fourFixSource = (): Curve => curve(2, [[1, 0], null, [0, 1], null])
+  const tenPointPoly = (): Vec2[] => Array.from({ length: 10 }, (_, i): Vec2 => [i, i * 0.5])
+
+  it('turns every polyline point into a fix point with n = 0', () => {
+    const baked = curveFromPolyline(fourFixSource(), tenPointPoly())
+    expect(baked.n).toBe(0)
+    expect(baked.fixPoints).toHaveLength(10)
+    expect(baked.fixPoints.map((fp) => fp.pos)).toEqual(tenPointPoly())
+    expect(baked.spans).toHaveLength(9)
+    expect(baked.spans.every((span) => span.length === 0)).toBe(true)
+    expect(baked.targetLength).toBeUndefined()
   })
 
-  it('omits slots bound by an oriented fix point', () => {
-    const source = curve(3, [[1, 0], null])
-    const poly: Vec2[] = [
-      [0, 0],
-      [1, 1],
-      [2, 2],
-      [3, 3],
-      [4, 4],
-    ]
-    const baked = curveFromPolyline(source, poly)
-    expect(baked.spans).toEqual([[[2, 2], [3, 3]]])
+  it('copies source fix-point tangents and leaves derived points unoriented', () => {
+    const baked = curveFromPolyline(fourFixSource(), tenPointPoly())
+    expect(baked.fixPoints[0].orientation).toEqual([1, 0])
+    expect(baked.fixPoints[6].orientation).toEqual([0, 1])
+    expect(baked.fixPoints[3].orientation).toBeNull()
+    expect(baked.fixPoints[9].orientation).toBeNull()
+    for (const i of [1, 2, 4, 5, 7, 8]) {
+      expect(baked.fixPoints[i].orientation).toBeNull()
+    }
   })
 
-  it('uses the source position when the polyline is too short', () => {
-    const source = curve(3, [null, null])
-    const baked = curveFromPolyline(source, [[10, 1], [11, 2]])
-    expect(baked.fixPoints[0].pos).toEqual([10, 1])
-    expect(baked.fixPoints[1].pos).toEqual([3, 0])
-  })
-
-  it('offsets free slots correctly across multiple spans', () => {
-    const source = curve(2, [null, null, null])
-    const poly: Vec2[] = [
-      [0, 0],
-      [1, 0],
-      [2, 0],
-      [3, 0],
-      [4, 0],
-      [5, 0],
-      [6, 0],
-    ]
+  it('keeps endpoint tangents for a single-span source', () => {
+    const source = curve(6, [[0, 1], [0, 1]])
+    const poly = Array.from({ length: 8 }, (_, i): Vec2 => [i, 0])
     const baked = curveFromPolyline(source, poly)
-    expect(baked.spans).toEqual([[[1, 0], [2, 0]], [[4, 0], [5, 0]]])
+    expect(baked.n).toBe(0)
+    expect(baked.fixPoints).toHaveLength(8)
+    expect(baked.fixPoints[0]).toEqual({ pos: [0, 0], orientation: [0, 1] })
+    expect(baked.fixPoints[7]).toEqual({ pos: [7, 0], orientation: [0, 1] })
+    expect(baked.fixPoints[3].orientation).toBeNull()
   })
 })
 
 describe('appendBakedCurve', () => {
-  it('appends a baked curve without mutating the input setup', () => {
-    const setup: Setup = { curves: [curve(3, [null, null])] }
-    const poly: Vec2[] = [
-      [10, 1],
-      [11, 2],
-      [12, 3],
-      [13, 4],
-      [20, 5],
-    ]
+  it('appends a fully-fixed baked curve without mutating the input setup', () => {
+    const setup: Setup = { curves: [curve(2, [[1, 0], null, [0, 1], null])] }
+    const poly = Array.from({ length: 10 }, (_, i): Vec2 => [i, i * 0.5])
     const appended = appendBakedCurve(setup, poly, setup.curves[0])
     expect(appended.curves).toHaveLength(2)
-    expect(appended.curves[1].n).toBe(3)
+    expect(appended.curves[1].n).toBe(0)
+    expect(appended.curves[1].fixPoints).toHaveLength(10)
+    expect(appended.curves[0].n).toBe(2)
     expect(setup.curves).toHaveLength(1)
   })
 })
