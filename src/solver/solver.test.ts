@@ -14,6 +14,7 @@ import { createFrameBuffer } from './frameBuffer'
 import { totalSegmentCount } from './curve'
 import { DEFAULT_CONSTANTS, type Frame, type Setup, type Vec2 } from './types'
 import { validateSetup } from './validate'
+import { MAX_RUNNING_PROGRESS, ProgressTracker } from './progress'
 
 /** Single oriented curve with two fix points. */
 const setup1 = (
@@ -687,5 +688,61 @@ describe('targetLength validation', () => {
     expect(validateSetup(withTarget(-3))[0].field).toBe('targetLength:0')
     expect(validateSetup(withTarget(NaN))[0].field).toBe('targetLength:0')
     expect(validateSetup(withTarget(Infinity))[0].field).toBe('targetLength:0')
+  })
+})
+
+describe('progress tracking', () => {
+  it('exposes a running cap just below completion', () => {
+    expect(MAX_RUNNING_PROGRESS).toBeGreaterThan(0.9)
+    expect(MAX_RUNNING_PROGRESS).toBeLessThan(1)
+  })
+
+  it('starts at zero and uses frame progress when energy is flat', () => {
+    const tracker = new ProgressTracker(0.001)
+    expect(tracker.progress(0, 100)).toBe(0)
+    tracker.observe(5)
+    expect(tracker.progress(25, 100)).toBeCloseTo(0.25, 12)
+  })
+
+  it('rises as the envelope falls from a peak, then jumps on a new peak', () => {
+    const tracker = new ProgressTracker(0.5)
+    tracker.observe(2)
+    expect(tracker.progress(0, 100)).toBe(0)
+    tracker.observe(0)
+    expect(tracker.progress(0, 100)).toBeCloseTo(0.5, 12)
+    tracker.observe(4)
+    expect(tracker.progress(0, 100)).toBe(0)
+  })
+
+  it('never reports 100% while the run is still going', () => {
+    const tracker = new ProgressTracker(1)
+    tracker.observe(1)
+    for (let k = 0; k < 50; k++) tracker.observe(0)
+    expect(tracker.progress(0, 1)).toBe(MAX_RUNNING_PROGRESS)
+    expect(tracker.progress(1_000_000, 1)).toBe(MAX_RUNNING_PROGRESS)
+  })
+
+  it('is monotonic and only reaches 1.0 in the final sample', () => {
+    const setup = setup1(6, [0, 0], [0, 0], [0, 1], [0, -1])
+    const samples: { progress: number; iteration: number }[] = []
+    const result = solve(setup, DEFAULT_CONSTANTS, {
+      onProgress: (progress, iteration) => samples.push({ progress, iteration }),
+      ...plainInit,
+    })
+
+    expect(result.meta.termination).toBe('ke')
+    expect(samples.length).toBeGreaterThan(1)
+
+    const last = samples[samples.length - 1]
+    expect(last.progress).toBe(1)
+    expect(last.iteration).toBe(result.meta.iterations)
+
+    for (const sample of samples.slice(0, -1)) {
+      expect(sample.progress).toBeLessThan(1)
+      expect(sample.progress).toBeLessThanOrEqual(MAX_RUNNING_PROGRESS + 1e-9)
+    }
+    for (let k = 1; k < samples.length; k++) {
+      expect(samples[k].progress).toBeGreaterThanOrEqual(samples[k - 1].progress)
+    }
   })
 })

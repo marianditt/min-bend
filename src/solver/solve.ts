@@ -11,6 +11,7 @@ import {
 } from './forces'
 import { createFrameBuffer } from './frameBuffer'
 import { freeSlotsFor, totalSegmentCount } from './curve'
+import { ProgressTracker } from './progress'
 
 /** Thrown by solve() when shouldCancel() returns true. */
 export class CancelledError extends Error {
@@ -257,37 +258,35 @@ function totalKineticEnergy(spans: SpanState[]): number {
   return ke
 }
 
-/** Report progress with ~50ms throttling, but always at least once and exactly 1.0 at end. */
+/**
+ * Report progress with ~50ms throttling. The final sample (via `finalize`)
+ * always reports 1.0 together with the true last iteration and energy, so the
+ * UI never flashes the configured maxIter as if the run had used it all.
+ */
 function makeProgressReporter(
   onProgress: SolveOptions['onProgress'],
   maxIter: number,
-): { report: (iteration: number, ke: number, force?: boolean) => void; finalize: () => void } {
+  release: number,
+): {
+  report: (iteration: number, ke: number, force?: boolean) => void
+  finalize: (iteration: number, ke: number) => void
+} {
+  const tracker = new ProgressTracker(release)
   let lastReportTime = 0
   let hasReported = false
-  let kePeak = 0
 
   const report = (iteration: number, ke: number, force = false): void => {
     if (!onProgress) return
-
+    tracker.observe(ke)
     const now = performance.now()
     if (!force && hasReported && now - lastReportTime < 50) return
-
-    if (ke > kePeak) kePeak = ke
-
-    const pIter = iteration / maxIter
-    const pKe = kePeak > 0 ? Math.max(0, Math.min(1, 1 - ke / kePeak)) : 0
-    const progress = Math.max(pIter, pKe)
-
-    onProgress(progress, iteration, ke)
+    onProgress(tracker.progress(iteration, maxIter), iteration, ke)
     lastReportTime = now
     hasReported = true
   }
 
-  const finalize = (): void => {
-    if (onProgress && hasReported) {
-      // Ensure we report exactly 1.0 at completion
-      onProgress(1, maxIter, 0)
-    }
+  const finalize = (iteration: number, ke: number): void => {
+    if (onProgress) onProgress(1, iteration, ke)
   }
 
   return { report, finalize }
@@ -318,7 +317,11 @@ export function solve(
   const initialKe = totalKineticEnergy(spans)
   buffer.add({ i: 0, ke: initialKe, curves: captureCurves() })
 
-  const { report, finalize } = makeProgressReporter(onProgress, maxIter)
+  const { report, finalize } = makeProgressReporter(
+    onProgress,
+    maxIter,
+    constants.gamma * constants.h,
+  )
   report(0, initialKe, true)
 
   let termination: 'ke' | 'maxIter' = 'maxIter'
@@ -368,7 +371,7 @@ export function solve(
     }
   }
 
-  finalize()
+  finalize(lastIter, lastKe)
 
   const last: Frame = { i: lastIter, ke: lastKe, curves: captureCurves() }
   const frames = buffer.finish(last)
