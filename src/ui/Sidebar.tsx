@@ -14,6 +14,7 @@ import {
   setCurveTargetLength,
   setFixOrientation,
   setFixOrientationComponent,
+  toggleCurveHidden,
 } from './setupEdits'
 import { freeSlotCount } from '../solver/curve'
 import { previewPose } from '../solver/solve'
@@ -34,6 +35,7 @@ export interface SidebarProps {
   constants: PhysicsConstants
   onEdit: (mutator: (setup: Setup) => Setup) => void
   onConstantsChange: (next: PhysicsConstants) => void
+  onReset: () => void
 }
 
 interface ConstantSpec {
@@ -130,6 +132,21 @@ function CheckIcon() {
   )
 }
 
+function EyeIcon({ off }: { off: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7" />
+      {off ? <path d="M4 20 20 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" /> : null}
+    </svg>
+  )
+}
+
 export function Sidebar({
   status,
   progress,
@@ -144,6 +161,7 @@ export function Sidebar({
   constants,
   onEdit,
   onConstantsChange,
+  onReset,
 }: SidebarProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
@@ -180,18 +198,32 @@ export function Sidebar({
       <section className="sidebar__section">
         <div className="sidebar__section-head">
           <h2 className="sidebar__section-title">Curves</h2>
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm"
-            disabled={running}
-            onClick={() => onEdit(addCurve)}
-          >
-            + Add curve
-          </button>
+          <div className="sidebar__section-actions">
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              disabled={running}
+              title="Restore the default setup and physics constants"
+              onClick={onReset}
+            >
+              Reset
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              disabled={running}
+              onClick={() => onEdit(addCurve)}
+            >
+              + Add curve
+            </button>
+          </div>
         </div>
 
         {setup.curves.map((curve, ci) => (
-          <div className={`curve-card ${collapsed.has(ci) ? 'is-collapsed' : ''}`} key={ci}>
+          <div
+            className={`curve-card ${collapsed.has(ci) ? 'is-collapsed' : ''} ${curve.hidden ? 'is-hidden' : ''}`}
+            key={ci}
+          >
             <div className="curve-card__head">
               <button
                 type="button"
@@ -209,6 +241,16 @@ export function Sidebar({
                     {curve.targetLength != null ? ` · L ${curve.targetLength}` : ''}
                   </span>
                 ) : null}
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm curve-card__eye"
+                disabled={running}
+                aria-pressed={!curve.hidden}
+                title={curve.hidden ? 'Show this curve' : 'Hide this curve from playback and plots'}
+                onClick={() => onEdit((s) => toggleCurveHidden(s, ci))}
+              >
+                <EyeIcon off={!!curve.hidden} />
               </button>
               <button
                 type="button"

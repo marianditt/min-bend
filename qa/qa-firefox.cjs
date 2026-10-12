@@ -315,6 +315,15 @@ function check(name, cond, extra = '') {
     check('Multi: player curve selector has 2 chips', (await page.locator('.player .chip-row--view .chip').count()) === 2)
     await page.screenshot({ path: shot('qa-8-multicurve.png') })
 
+    // --- Create a new curve from the solved frame (R3) ---
+    const fromFrameBtn = page.locator('button:has-text("Curve from frame")')
+    check('Create-from-frame: button present in player', (await fromFrameBtn.count()) === 1)
+    await fromFrameBtn.click()
+    await page.waitForSelector('.pose-editor')
+    check('Create-from-frame: returns to the editor', await page.isVisible('.pose-editor'))
+    check('Create-from-frame: appended a curve', (await page.locator('.curve-card').count()) === 3)
+    await page.screenshot({ path: shot('qa-9-fromframe.png') })
+
     // --- Slow compute -> cancel ---
     await page.locator('button:has-text("Advanced constants")').click()
     const settleInput = page.getByRole('textbox', { name: 'Settle frames' })
@@ -331,12 +340,55 @@ function check(name, cond, extra = '') {
       .then(() => true)
       .catch(() => false)
     check('Cancel run: Cancel button appears', cancelVisible)
+    const ringPct = await page
+      .locator('.ring__percent')
+      .textContent()
+      .catch(() => null)
+    const runPct = ringPct ? Number(norm(ringPct).replace('%', '')) : NaN
+    check('Progress: ring stays below 100% while running', Number.isFinite(runPct) && runPct < 100, `pct=${ringPct}`)
     await page.locator('aside button:has-text("Cancel")').first().click()
     await page.waitForSelector('.notice--warn', { timeout: 8000 })
     check('Cancel: cancelled notice shown', /cancelled/i.test(norm(await page.textContent('.notice--warn'))))
     check('Cancel: setup editor restored', await page.isVisible('.pose-editor'))
     check('Cancel: Compute re-enabled', await computeBtn.isEnabled())
     await page.screenshot({ path: shot('qa-5-cancelled.png') })
+
+    // --- Hide curves (R2) + persistence across reload (R4) ---
+    const firstCard = page.locator('.curve-card').first()
+    check('Hide: eye toggle present', (await firstCard.locator('.curve-card__eye').count()) === 1)
+    await firstCard.locator('.curve-card__eye').click()
+    await page.waitForTimeout(150)
+    check('Hide: card marked hidden', ((await firstCard.getAttribute('class')) || '').includes('is-hidden'))
+    await page.screenshot({ path: shot('qa-10-hidden.png') })
+
+    const curveCountBeforeReload = await page.locator('.curve-card').count()
+    await page.reload({ waitUntil: 'load' })
+    await page.waitForSelector('.pose-editor')
+    check(
+      'Persistence: curve count restored',
+      (await page.locator('.curve-card').count()) === curveCountBeforeReload,
+      `n=${curveCountBeforeReload}`,
+    )
+    check(
+      'Persistence: hidden flag restored',
+      ((await page.locator('.curve-card').first().getAttribute('class')) || '').includes('is-hidden'),
+    )
+    await page.locator('button:has-text("Advanced constants")').click()
+    check(
+      'Persistence: constants restored',
+      (await page.getByRole('textbox', { name: 'Max iterations' }).inputValue()) === '50000000',
+    )
+    await page.locator('button:has-text("Advanced constants")').click()
+
+    // --- Reset to defaults (R4) ---
+    await page.locator('.sidebar__section-actions button:has-text("Reset")').click()
+    await page.waitForTimeout(150)
+    check('Reset: back to a single default curve', (await page.locator('.curve-card').count()) === 1)
+    check('Reset: default n = 6', (await fieldInput('Interior points per span').inputValue()) === '6')
+    await page.reload({ waitUntil: 'load' })
+    await page.waitForSelector('.pose-editor')
+    check('Reset: defaults persist after reload', (await page.locator('.curve-card').count()) === 1)
+    await page.screenshot({ path: shot('qa-11-reset.png') })
 
     // --- Console health ---
     await page.waitForTimeout(300)

@@ -1,5 +1,5 @@
 import type { Curve, FixPoint, Setup, Vec2 } from '../solver/types'
-import { freeSlotCount } from '../solver/curve'
+import { freeSlotCount, freeSlotsFor } from '../solver/curve'
 
 /** Deep clone a setup so edits stay immutable. */
 export function cloneSetup(setup: Setup): Setup {
@@ -142,5 +142,55 @@ export function clearSpan(setup: Setup, ci: number, si: number): Setup {
   if (!span || span.length === 0) return setup
   const next = cloneSetup(setup)
   next.curves[ci].spans[si] = []
+  return next
+}
+
+export function toggleCurveHidden(setup: Setup, ci: number): Setup {
+  const curve = setup.curves[ci]
+  if (!curve) return setup
+  const next = cloneSetup(setup)
+  next.curves[ci].hidden = !curve.hidden
+  return next
+}
+
+/**
+ * Bake a solved polyline into a fresh curve that mirrors the source's
+ * structure (fix points, orientations, n and any target length) while taking
+ * every position from the solved frame. Only the free interior slots of each
+ * span are stored, since bound slots are re-derived by the solver.
+ */
+export function curveFromPolyline(source: Curve, poly: Vec2[]): Curve {
+  const n = Math.max(0, Math.floor(source.n))
+  const stride = n + 1
+  const fixPoints = source.fixPoints.map((fp, pi): FixPoint => {
+    const p = poly[pi * stride]
+    return {
+      pos: p ? [p[0], p[1]] : [fp.pos[0], fp.pos[1]],
+      orientation: fp.orientation ? [fp.orientation[0], fp.orientation[1]] : null,
+    }
+  })
+  const spans: Vec2[][] = []
+  for (let s = 0; s + 1 < fixPoints.length; s++) {
+    const slots = freeSlotsFor(
+      n,
+      fixPoints[s].orientation != null,
+      fixPoints[s + 1].orientation != null,
+    )
+    const base = s * stride
+    spans.push(
+      slots.map((k): Vec2 => {
+        const p = poly[base + k]
+        return p ? [p[0], p[1]] : [0, 0]
+      }),
+    )
+  }
+  const curve: Curve = { fixPoints, n, spans }
+  if (source.targetLength != null) curve.targetLength = source.targetLength
+  return curve
+}
+
+export function appendBakedCurve(setup: Setup, poly: Vec2[], source: Curve): Setup {
+  const next = cloneSetup(setup)
+  next.curves.push(curveFromPolyline(source, poly))
   return next
 }

@@ -1,7 +1,8 @@
-import { useCallback, useReducer } from 'react'
+import { useCallback, useEffect, useReducer } from 'react'
 import { DEFAULT_CONSTANTS } from '../solver/types'
 import type { PhysicsConstants, Setup } from '../solver/types'
 import { DEFAULT_SETUP } from '../ui/defaults'
+import { loadState, saveState } from '../lib/storage'
 
 const HISTORY_LIMIT = 200
 
@@ -20,6 +21,7 @@ export interface EditOptions {
 type SetupAction =
   | { type: 'update'; mutator: (setup: Setup) => Setup; history: boolean }
   | { type: 'constants'; constants: PhysicsConstants }
+  | { type: 'reset' }
   | { type: 'undo' }
   | { type: 'redo' }
 
@@ -35,6 +37,8 @@ function reducer(state: SetupState, action: SetupAction): SetupState {
     }
     case 'constants':
       return { ...state, constants: action.constants }
+    case 'reset':
+      return defaultSetupState()
     case 'undo': {
       const previous = state.past.at(-1)
       if (previous === undefined) return state
@@ -60,10 +64,21 @@ function reducer(state: SetupState, action: SetupAction): SetupState {
   }
 }
 
-function makeInitialState(): SetupState {
+function defaultSetupState(): SetupState {
   return {
     setup: structuredClone(DEFAULT_SETUP),
     constants: DEFAULT_CONSTANTS,
+    past: [],
+    future: [],
+  }
+}
+
+function makeInitialState(): SetupState {
+  const persisted = loadState()
+  if (!persisted) return defaultSetupState()
+  return {
+    setup: persisted.setup,
+    constants: persisted.constants,
     past: [],
     future: [],
   }
@@ -90,6 +105,11 @@ export function useSetupState() {
 
   const undo = useCallback(() => dispatch({ type: 'undo' }), [])
   const redo = useCallback(() => dispatch({ type: 'redo' }), [])
+  const reset = useCallback(() => dispatch({ type: 'reset' }), [])
+
+  useEffect(() => {
+    saveState({ setup: state.setup, constants: state.constants })
+  }, [state.setup, state.constants])
 
   return {
     setup: state.setup,
@@ -98,6 +118,7 @@ export function useSetupState() {
     canRedo: state.future.length > 0,
     update,
     setConstants,
+    reset,
     undo,
     redo,
   }

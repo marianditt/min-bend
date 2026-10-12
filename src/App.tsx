@@ -4,7 +4,8 @@ import { useSetupState } from './hooks/useSetupState'
 import { Player } from './player/Player'
 import { Sidebar } from './ui/Sidebar'
 import { PoseEditor } from './ui/PoseEditor'
-import type { PhysicsConstants, Setup } from './solver/types'
+import { appendBakedCurve } from './ui/setupEdits'
+import type { Curve, PhysicsConstants, Setup, Vec2 } from './solver/types'
 import { formatEnergy } from './lib/format'
 
 function MarkIcon() {
@@ -63,6 +64,14 @@ function App() {
     [compute],
   )
 
+  const handleCreateFromFrame = useCallback(
+    (poly: Vec2[], source: Curve) => {
+      setup.update((s) => appendBakedCurve(s, poly, source))
+      setEditing(true)
+    },
+    [setup],
+  )
+
   const resultIterations = result ? (result.meta.iterations ?? result.frames.length) : null
   const termination = result ? result.meta.termination : null
 
@@ -92,6 +101,7 @@ function App() {
           constants={setup.constants}
           onEdit={setup.update}
           onConstantsChange={setup.setConstants}
+          onReset={setup.reset}
           onCompute={handleCompute}
           onCancel={cancel}
         />
@@ -113,7 +123,11 @@ function App() {
                 </button>
                 <span className="stage-view__note">Simulation result</span>
               </div>
-              <Player key={playerKey} frameSet={result as NonNullable<typeof result>} />
+              <Player
+                key={playerKey}
+                frameSet={result as NonNullable<typeof result>}
+                onCreateFromFrame={handleCreateFromFrame}
+              />
             </div>
           ) : (
             <PoseEditor

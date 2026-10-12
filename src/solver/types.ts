@@ -43,6 +43,12 @@ export interface Curve {
    * geometric mean. null/absent = no constraint.
    */
   targetLength?: number | null
+  /**
+   * Display-only visibility flag. A hidden curve still participates in the
+   * simulation and stays in the result; the player and its plots simply skip
+   * drawing it and omit it from the curve selector.
+   */
+  hidden?: boolean
 }
 
 /** The whole multi-curve setup authored by the user. */

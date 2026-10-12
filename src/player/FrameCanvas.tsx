@@ -48,6 +48,7 @@ function draw(
 
   curves.forEach((pts, ci) => {
     if (!pts || pts.length === 0) return
+    if (inputCurves[ci]?.hidden) return
     const color = curveColor(ci, dark)
     const screen: [number, number][] = pts.map(([x, y]) => [project.toX(x), project.toY(y)])
     const curve = inputCurves[ci] ?? EMPTY_CURVE
@@ -119,7 +120,12 @@ export function FrameCanvas({ frameSet, frameIndex, playing }: FrameCanvasProps)
 
   const clampedIndex = Math.min(Math.max(frameIndex, 0), Math.max(frameSet.frames.length - 1, 0))
   const frameCurves = frameSet.frames[clampedIndex]?.curves
-  const bounds = useMemo(() => computePtsBounds((frameCurves ?? []).flat()), [frameCurves])
+  const inputCurves = frameSet.meta.input?.curves
+  const bounds = useMemo(() => {
+    const curves = frameCurves ?? []
+    const visible = inputCurves ? curves.filter((_, ci) => !inputCurves[ci]?.hidden) : curves
+    return computePtsBounds(visible.flat())
+  }, [frameCurves, inputCurves])
   const theme = dark ? DARK_THEME : LIGHT_THEME
 
   useEffect(() => {

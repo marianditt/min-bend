@@ -28,7 +28,7 @@ interface Range {
   max: number
 }
 
-function scanRange(frames: Frame[], axis: 0 | 1): Range {
+function scanRange(frames: Frame[], axis: 0 | 1, hidden: boolean[]): Range {
   let min = Infinity
   let max = -Infinity
   const total = frames.length
@@ -37,13 +37,14 @@ function scanRange(frames: Frame[], axis: 0 | 1): Range {
   const stride = Math.max(1, Math.ceil((total - head) / 1500))
   for (let i = 0; i < total; i += 1) {
     if (i >= head && (i - head) % stride !== 0) continue
-    for (const curve of frames[i].curves) {
+    frames[i].curves.forEach((curve, ci) => {
+      if (hidden[ci]) return
       for (const p of curve) {
         const v = p[axis]
         if (v < min) min = v
         if (v > max) max = v
       }
-    }
+    })
   }
   if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 1 }
   if (max - min < 1e-9) {
@@ -62,6 +63,7 @@ function draw(
   height: number,
   theme: PlotTheme,
   dark: boolean,
+  hidden: boolean[],
 ) {
   ctx.fillStyle = theme.bg
   ctx.fillRect(0, 0, width, height)
@@ -97,6 +99,7 @@ function draw(
   const frame = frames[frameIndex]
   if (!frame) return
   frame.curves.forEach((pts, ci) => {
+    if (hidden[ci]) return
     if (pts.length < 2) return
     const count = pts.length
     const denom = Math.max(count - 1, 1)
@@ -121,7 +124,11 @@ export function CoordinatePlot({ frameSet, frameIndex, axis }: CoordinatePlotPro
   const [size, setSize] = useState({ width: 0, height: 0 })
   const dark = usePrefersDark()
   const theme = dark ? DARK_THEME : LIGHT_THEME
-  const range = useMemo(() => scanRange(frameSet.frames, axis), [frameSet, axis])
+  const hidden = useMemo(
+    () => (frameSet.meta.input?.curves ?? []).map((c) => !!c.hidden),
+    [frameSet],
+  )
+  const range = useMemo(() => scanRange(frameSet.frames, axis, hidden), [frameSet, axis, hidden])
 
   useEffect(() => {
     const container = containerRef.current
@@ -145,8 +152,8 @@ export function CoordinatePlot({ frameSet, frameIndex, axis }: CoordinatePlotPro
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    draw(frameSet.frames, frameIndex, axis, range, ctx, size.width, size.height, theme, dark)
-  }, [frameSet, frameIndex, axis, range, size, theme, dark])
+    draw(frameSet.frames, frameIndex, axis, range, ctx, size.width, size.height, theme, dark, hidden)
+  }, [frameSet, frameIndex, axis, range, size, theme, dark, hidden])
 
   return (
     <div className="coordinate-plot" ref={containerRef}>

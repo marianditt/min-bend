@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import type { FrameSet } from '../solver/types'
+import type { Curve, FrameSet, Vec2 } from '../solver/types'
 import { FrameCanvas } from './FrameCanvas'
 import { SegmentPlot } from './SegmentPlot'
 import { CoordinatePlot } from './CoordinatePlot'
@@ -9,6 +9,7 @@ import './player.css'
 
 export interface PlayerProps {
   frameSet: FrameSet
+  onCreateFromFrame?: (poly: Vec2[], source: Curve) => void
 }
 
 const BASE_FPS = 30
@@ -81,7 +82,7 @@ function SplitIcon() {
  * Playback widget for a {@link FrameSet}. Remounted per compute run by the
  * parent (via a `key`), so each run starts cleanly at frame 0.
  */
-export function Player({ frameSet }: PlayerProps) {
+export function Player({ frameSet, onCreateFromFrame }: PlayerProps) {
   const total = frameSet.frames.length
   const lastIndex = Math.max(0, total - 1)
 
@@ -199,8 +200,17 @@ export function Player({ frameSet }: PlayerProps) {
   const currentFrame = frameSet.frames[safeIndex]
   const ke = currentFrame?.ke ?? 0
   const canStep = total > 1
+
+  const curveMeta = frameSet.meta.input?.curves
   const curveCount = Math.max(frameSet.meta.curveCount, 1)
-  const safeCurve = Math.min(Math.max(curveIndex, 0), curveCount - 1)
+  const visibleIndices = useMemo(
+    () =>
+      curveMeta
+        ? curveMeta.map((_, ci) => ci).filter((ci) => !curveMeta[ci].hidden)
+        : Array.from({ length: curveCount }, (_, ci) => ci),
+    [curveMeta, curveCount],
+  )
+  const safeCurve = visibleIndices.includes(curveIndex) ? curveIndex : (visibleIndices[0] ?? 0)
 
   const legend = useMemo(
     () => [
@@ -226,7 +236,7 @@ export function Player({ frameSet }: PlayerProps) {
 
         <div className="player__hud">
           <span>
-            {curveCount} curve{curveCount > 1 ? 's' : ''}
+            {visibleIndices.length} curve{visibleIndices.length === 1 ? '' : 's'}
           </span>
           <span>{frameSet.meta.N} pts</span>
           <span>KE {formatEnergy(ke)}</span>
@@ -234,9 +244,9 @@ export function Player({ frameSet }: PlayerProps) {
       </div>
 
       <div className="player__viewbar">
-        {curveCount > 1 ? (
+        {visibleIndices.length > 1 ? (
           <div className="chip-row chip-row--view" role="tablist" aria-label="Curve to plot">
-            {Array.from({ length: curveCount }, (_, ci) => (
+            {visibleIndices.map((ci) => (
               <button
                 key={ci}
                 type="button"
@@ -249,6 +259,22 @@ export function Player({ frameSet }: PlayerProps) {
               </button>
             ))}
           </div>
+        ) : null}
+
+        {onCreateFromFrame && curveMeta ? (
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={playing}
+            title="Create a new editable curve from this frame"
+            onClick={() => {
+              const poly = frameSet.frames[safeIndex]?.curves[safeCurve]
+              const source = curveMeta[safeCurve]
+              if (poly && source) onCreateFromFrame(poly, source)
+            }}
+          >
+            + Curve from frame
+          </button>
         ) : null}
 
         <button
