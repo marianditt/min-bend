@@ -14,6 +14,7 @@ interface PlotTheme {
   length: string
   bend: string
   label: string
+  bg: string
 }
 
 const LIGHT_THEME: PlotTheme = {
@@ -22,6 +23,7 @@ const LIGHT_THEME: PlotTheme = {
   length: '#3563e9',
   bend: '#b45309',
   label: '#5a6472',
+  bg: '#eceef3',
 }
 
 const DARK_THEME: PlotTheme = {
@@ -30,6 +32,7 @@ const DARK_THEME: PlotTheme = {
   length: '#7aa2ff',
   bend: '#fbbf24',
   label: '#99a2b1',
+  bg: '#090b0e',
 }
 
 const MIN_VEC = 1e-6
@@ -61,6 +64,11 @@ function analyzeFrame(pts: Vec2[]): FrameProfile {
 interface SeriesMaxima {
   length: number
   bend: number
+}
+
+interface FrameAggregates {
+  avgLength: number
+  maxBend: number
 }
 
 /**
@@ -104,6 +112,41 @@ function drawLegend(ctx: CanvasRenderingContext2D, theme: PlotTheme) {
   }
 }
 
+function drawGuide(
+  ctx: CanvasRenderingContext2D,
+  y: number,
+  label: string,
+  color: string,
+  plotW: number,
+  theme: PlotTheme,
+) {
+  ctx.save()
+  ctx.setLineDash([4, 4])
+  ctx.lineWidth = 1.2
+  ctx.strokeStyle = color
+  ctx.globalAlpha = 0.7
+  ctx.beginPath()
+  ctx.moveTo(PAD.left, Math.round(y) + 0.5)
+  ctx.lineTo(PAD.left + plotW, Math.round(y) + 0.5)
+  ctx.stroke()
+
+  ctx.setLineDash([])
+  ctx.globalAlpha = 1
+  ctx.font = '10px ui-sans-serif, system-ui, sans-serif'
+  ctx.textAlign = 'right'
+  const below = y - 12 < PAD.top
+  ctx.textBaseline = below ? 'top' : 'bottom'
+  const tx = PAD.left + plotW
+  const ty = below ? y + 2 : y - 2
+  ctx.lineWidth = 3
+  ctx.lineJoin = 'round'
+  ctx.strokeStyle = theme.bg
+  ctx.strokeText(label, tx, ty)
+  ctx.fillStyle = color
+  ctx.fillText(label, tx, ty)
+  ctx.restore()
+}
+
 function draw(
   frames: Frame[],
   frameIndex: number,
@@ -112,7 +155,7 @@ function draw(
   width: number,
   height: number,
   theme: PlotTheme,
-) {
+): FrameAggregates | null {
   ctx.clearRect(0, 0, width, height)
   const plotW = Math.max(width - PAD.left - PAD.right, 1)
   const plotH = Math.max(height - PAD.top - PAD.bottom, 1)
@@ -137,18 +180,28 @@ function draw(
   drawLegend(ctx, theme)
 
   const pts = frames[frameIndex]?.pts
-  if (!pts || pts.length < 2) return
+  if (!pts || pts.length < 2) return null
 
   const { lengths, bends } = analyzeFrame(pts)
   const count = lengths.length
-  if (count === 0) return
+  if (count === 0) return null
+  const lenMax = maxima.length > 0 ? maxima.length : 1
+  const bendMax = maxima.bend > 0 ? maxima.bend : 1
   const denom = Math.max(count - 1, 1)
   const xFor = (k: number) => PAD.left + (k / denom) * plotW
   const yFor = (value: number, max: number) => baselineY - (value / max) * plotH
 
+  let sumLengths = 0
+  for (const value of lengths) sumLengths += value
+  const avgLength = sumLengths / count
+  let maxBend = 0
+  for (const value of bends) if (value > maxBend) maxBend = value
+  drawGuide(ctx, yFor(avgLength, lenMax), `avg length ${avgLength.toFixed(3)}`, theme.length, plotW, theme)
+  drawGuide(ctx, yFor(maxBend, bendMax), `max bend ${maxBend.toFixed(1)}°`, theme.bend, plotW, theme)
+
   const series = [
-    { values: lengths, max: maxima.length > 0 ? maxima.length : 1, color: theme.length },
-    { values: bends, max: maxima.bend > 0 ? maxima.bend : 1, color: theme.bend },
+    { values: lengths, max: lenMax, color: theme.length },
+    { values: bends, max: bendMax, color: theme.bend },
   ]
 
   if (count === 1) {
@@ -158,7 +211,7 @@ function draw(
       ctx.arc(xFor(0), yFor(item.values[0], item.max), 2.2, 0, Math.PI * 2)
       ctx.fill()
     }
-    return
+    return { avgLength, maxBend }
   }
 
   ctx.lineWidth = 1.8
@@ -173,6 +226,7 @@ function draw(
     }
     ctx.stroke()
   }
+  return { avgLength, maxBend }
 }
 
 export function SegmentPlot({ frameSet, frameIndex }: SegmentPlotProps) {
@@ -205,7 +259,14 @@ export function SegmentPlot({ frameSet, frameIndex }: SegmentPlotProps) {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    draw(frameSet.frames, frameIndex, maxima, ctx, size.width, size.height, theme)
+    const aggregates = draw(frameSet.frames, frameIndex, maxima, ctx, size.width, size.height, theme)
+    if (aggregates) {
+      canvas.dataset.avgLength = String(aggregates.avgLength)
+      canvas.dataset.maxBend = String(aggregates.maxBend)
+    } else {
+      delete canvas.dataset.avgLength
+      delete canvas.dataset.maxBend
+    }
   }, [frameSet, frameIndex, size, maxima, theme])
 
   return (

@@ -173,6 +173,25 @@ function check(name, cond, extra = '') {
     const plotSigFrame1 = await plotSig()
     check('Plot: canvas painted at frame 1', plotSigFrame1 > 0, `sig=${plotSigFrame1}`)
 
+    const plotAgg = () =>
+      page.evaluate(() => {
+        const c = document.querySelector('.player__plot canvas')
+        return c
+          ? { avg: Number(c.dataset.avgLength), bend: Number(c.dataset.maxBend) }
+          : { avg: NaN, bend: NaN }
+      })
+    const aggFirst = await plotAgg()
+    check(
+      'Plot: avg length exposed and positive',
+      Number.isFinite(aggFirst.avg) && aggFirst.avg > 0,
+      `avg=${aggFirst.avg}`,
+    )
+    check(
+      'Plot: max bend exposed and positive at frame 1',
+      Number.isFinite(aggFirst.bend) && aggFirst.bend > 0,
+      `bend=${aggFirst.bend}`,
+    )
+
     // Start playback to verify the animation advances
     await page.getByRole('button', { name: 'Play', exact: true }).click()
 
@@ -226,6 +245,15 @@ function check(name, cond, extra = '') {
     await page.waitForTimeout(150)
     const atEnd = await frameNum()
     check('Scrubber: End -> last frame', atEnd.cur === atEnd.tot, JSON.stringify(atEnd))
+    const aggLast = await plotAgg()
+    check(
+      'Plot: aggregates recompute per frame',
+      Number.isFinite(aggLast.avg) &&
+        Number.isFinite(aggLast.bend) &&
+        aggLast.avg > 0 &&
+        (aggLast.bend !== aggFirst.bend || aggLast.avg !== aggFirst.avg),
+      `first avg=${aggFirst.avg.toFixed(3)} bend=${aggFirst.bend.toFixed(2)} | last avg=${aggLast.avg.toFixed(3)} bend=${aggLast.bend.toFixed(2)}`,
+    )
     const scaleLast = await canvasScale()
     check(
       'Plot scale: positive at last frame',
