@@ -9,9 +9,9 @@ import {
   clampMagnitude,
   length,
 } from './forces'
-import { CancelledError, solve } from './solve'
+import { CancelledError, previewPose, solve } from './solve'
 import { createFrameBuffer } from './frameBuffer'
-import { DEFAULT_CONSTANTS, type Frame, type Vec2 } from './types'
+import { DEFAULT_CONSTANTS, type Frame, type Vec2, type ProblemInput } from './types'
 import { validateInput } from './validate'
 
 const validInput = {
@@ -449,5 +449,179 @@ describe('frame buffer', () => {
     expect(out[0].i).toBe(0)
     expect(out[out.length - 1].i).toBe(31)
     expect(out.length).toBeLessThanOrEqual(4)
+  })
+})
+
+describe('drawn points', () => {
+  const makeInput = (overrides: Partial<ProblemInput> = {}): ProblemInput => ({
+    n: 5,
+    start: [0, 0] as Vec2,
+    end: [10, 0] as Vec2,
+    startDir: [1, 0] as Vec2,
+    endDir: [1, 0] as Vec2,
+    ...overrides,
+  })
+
+  it('seeds p1..pk from drawnPts and fills tail linearly toward E when k < n', () => {
+    const drawn = [[2, 1], [4, 0]] as Vec2[] // k=2, n=5 so k < n
+    const input = makeInput({ drawnPts: drawn })
+    const frame0 = solve(input, { ...DEFAULT_CONSTANTS, maxIter: 1 }, { random: () => 0 }).frames[0]
+
+    // p0 and p_{N-1} are the anchors
+    expect(frame0.pts[0]).toEqual([0, 0])
+    expect(frame0.pts[6]).toEqual([10, 0])
+
+    // p1 and p2 come from the drawing, after orientation projection
+    const d1 = normalize(input.endDir)
+    const D = Math.hypot(10 - 0, 0 - 0)
+    const o = D / (input.n + 1)
+    const E: Vec2 = [10 - o * d1[0], 0 - o * d1[1]]
+
+    // p1 should be on ray from p0 along d0 (orientation constraint)
+    const s0: Vec2 = [frame0.pts[1][0] - frame0.pts[0][0], frame0.pts[1][1] - frame0.pts[0][1]]
+    expect(normalize(s0)[0]).toBeCloseTo(1, 12)
+    expect(normalize(s0)[1]).toBeCloseTo(0, 12)
+    // p1's x-coordinate should be close to the drawn x (2), after projection
+    expect(frame0.pts[1][0]).toBeCloseTo(2, 12)
+
+    // p2 should be on ray from p0 along d0 too (since k < n and both are drawn)
+    // Actually p2 is directly from drawing, then projection applies to p1 only
+    // Let's just check the tail is linear toward E
+    // p3: t = (3-2)/(5-2) = 1/3 toward E from p2
+    expect(frame0.pts[3][0]).toBeCloseTo(4 + (1 / 3) * (E[0] - 4), 12)
+    expect(frame0.pts[3][1]).toBeCloseTo(0 + (1 / 3) * (E[1] - 0), 12)
+    // p4: t = (4-2)/(5-2) = 2/3 toward E from p2
+    expect(frame0.pts[4][0]).toBeCloseTo(4 + (2 / 3) * (E[0] - 4), 12)
+    expect(frame0.pts[4][1]).toBeCloseTo(0 + (2 / 3) * (E[1] - 0), 12)
+    // p5: t = (5-2)/(5-2) = 1, so p5 = E
+    expect(frame0.pts[5][0]).toBeCloseTo(E[0], 12)
+    expect(frame0.pts[5][1]).toBeCloseTo(E[1], 12)
+  })
+
+  it('all interior points come from the drawing when drawnPts length equals n', () => {
+    const drawn = [[1, 2], [3, 1], [5, 0], [7, 1]] as Vec2[] // k=4, n=4 so k == n
+    const input = makeInput({ n: 4, drawnPts: drawn }) // n must equal drawnPts length
+    // Use plainInit (random: 0.5) for zero jitter so orientation projection is the only modifier
+    const frame0 = solve(input, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit).frames[0]
+
+    // p0 and p_{N-1} are the anchors (N = n + 2 = 6, indices 0..5)
+    expect(frame0.pts[0]).toEqual([0, 0])
+    expect(frame0.pts[5]).toEqual([10, 0])
+
+    // p1 is orientation-projected onto ray from p0 along d0, so it may differ from raw drawn[0]
+    // p2 and p3 are NOT projected (enforceOrientationConstraints only projects p1 and p_n)
+    // p4 is orientation-projected onto ray from p_{N-1} along -d1
+    // Check p2 and p3 exactly equal their drawn values
+    expect(frame0.pts[2]).toEqual(drawn[1]) // [3, 1]
+    expect(frame0.pts[3]).toEqual(drawn[2]) // [5, 0]
+
+    // p1 should be on ray from p0 along d0
+    const s0: Vec2 = [frame0.pts[1][0] - frame0.pts[0][0], frame0.pts[1][1] - frame0.pts[0][1]]
+    expect(normalize(s0)[0]).toBeCloseTo(1, 12)
+    expect(normalize(s0)[1]).toBeCloseTo(0, 12)
+
+    // p4 should be on ray from end (pts[5]) along d1 (the vector from p4 to end is clampedProjM * d1)
+    const sLast: Vec2 = [frame0.pts[5][0] - frame0.pts[4][0], frame0.pts[5][1] - frame0.pts[4][1]]
+    expect(normalize(sLast)[0]).toBeCloseTo(1, 12) // direction is d1 = [1, 0]
+    expect(normalize(sLast)[1]).toBeCloseTo(0, 12)
+  })
+
+it('absent drawnPts produces identical result to before (deterministic with fixed random)', () => {
+    const input = makeInput() // no drawnPts
+    const frame0a = solve(input, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit).frames[0]
+    const frame0b = solve(input, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit).frames[0]
+
+    // Same fixed RNG produces identical results
+    expect(frame0a).toEqual(frame0b)
+
+    // Known properties from the existing chord layout (zero jitter with plainInit)
+    // p1 = start + o*d0, pn = end - o*d1 (last free point, index n), end = pts[N-1]
+    const o = 10 / (input.n + 1) // = 10/6
+
+    // p1 is the first free point, on the chord from start along d0
+    expect(frame0a.pts[1]).toEqual([o * normalize(input.startDir)[0], o * normalize(input.startDir)[1]])
+
+    // p_n is the last free point, on the chord from end along -d1
+    expect(frame0a.pts[input.n][0]).toBeCloseTo(10 - o * normalize(input.endDir)[0], 12)
+    expect(frame0a.pts[input.n][1]).toBeCloseTo(0, 12)
+
+    // The fixed end point at index N-1 = input.n + 1
+    expect(frame0a.pts[input.n + 1]).toEqual([10, 0])
+
+    // Interior points linearly interpolated between p1 and pn
+    for (let k = 2; k <= input.n - 1; k++) {
+      const t = (k - 1) / (input.n - 1)
+      const expectedX = o * normalize(input.startDir)[0] + t * (10 - o * normalize(input.endDir)[0] - o * normalize(input.startDir)[0])
+      const expectedY = o * normalize(input.startDir)[1] + t * (0 - o * normalize(input.endDir)[1] - o * normalize(input.startDir)[1])
+      expect(frame0a.pts[k][0]).toBeCloseTo(expectedX, 12)
+      expect(frame0a.pts[k][1]).toBeCloseTo(expectedY, 12)
+    }
+  })
+
+  it('seeded p1 and p_n satisfy the orientation constraint (lying on their rays)', () => {
+    // Test with non-coincident anchors
+    const drawn = [[3, 1], [7, -1]] as Vec2[] // k=2, n=5
+    const input = makeInput({ drawnPts: drawn })
+    const frame0 = solve(input, { ...DEFAULT_CONSTANTS, maxIter: 1 }, { random: () => 0 }).frames[0]
+
+    const d0 = normalize(input.startDir)
+    const d1 = normalize(input.endDir)
+
+    // p1 should lie on ray from p0 along d0
+    const s0: Vec2 = [frame0.pts[1][0] - frame0.pts[0][0], frame0.pts[1][1] - frame0.pts[0][1]]
+    const n0 = normalize(s0)
+    const align0 = n0[0] * d0[0] + n0[1] * d0[1]
+    expect(align0).toBeCloseTo(1, 10)
+
+    // p_n should lie on ray from p_{N-1} along d1 (pointing inward)
+    const N = frame0.pts.length
+    const sLast: Vec2 = [
+      frame0.pts[N - 1][0] - frame0.pts[N - 2][0],
+      frame0.pts[N - 1][1] - frame0.pts[N - 2][1],
+    ]
+    const nLast = normalize(sLast)
+    const alignLast = nLast[0] * d1[0] + nLast[1] * d1[1]
+    expect(alignLast).toBeCloseTo(1, 10)
+
+    // Test with coincident anchors (start == end)
+    const coincidentInput = makeInput({
+      start: [0, 0] as Vec2,
+      end: [0, 0] as Vec2,
+      startDir: [0, 1] as Vec2,
+      endDir: [0, -1] as Vec2,
+      drawnPts: [[1, 2], [3, 4]] as Vec2[],
+    })
+    const frameCoincident = solve(coincidentInput, { ...DEFAULT_CONSTANTS, maxIter: 1, epsilon: 1e-12 }, { random: () => 0 }).frames[0]
+
+    // p1 should lie on ray from p0 along d0 = [0,1]
+    const s0c: Vec2 = [frameCoincident.pts[1][0] - frameCoincident.pts[0][0], frameCoincident.pts[1][1] - frameCoincident.pts[0][1]]
+    expect(normalize(s0c)[0]).toBeCloseTo(0, 12)
+    expect(normalize(s0c)[1]).toBeCloseTo(1, 12)
+
+    // p_n should lie on ray from p_{N-1} along d1 = [0,-1]
+    const Nc = frameCoincident.pts.length
+    const sLastc: Vec2 = [
+      frameCoincident.pts[Nc - 1][0] - frameCoincident.pts[Nc - 2][0],
+      frameCoincident.pts[Nc - 1][1] - frameCoincident.pts[Nc - 2][1],
+    ]
+    expect(normalize(sLastc)[0]).toBeCloseTo(0, 12)
+    expect(normalize(sLastc)[1]).toBeCloseTo(-1, 12)
+  })
+
+  it('previewPose matches the solved frame-0 pose (deterministic, no jitter)', () => {
+    const cases: ProblemInput[] = [
+      makeInput({ drawnPts: [[2, 3], [4, 0]] as Vec2[] }),
+      makeInput({
+        start: [0, 0] as Vec2,
+        end: [0, 0] as Vec2,
+        startDir: [0, 1] as Vec2,
+        endDir: [0, -1] as Vec2,
+      }),
+      makeInput(),
+    ]
+    for (const input of cases) {
+      const frame0 = solve(input, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit).frames[0]
+      expect(previewPose(input)).toEqual(frame0.pts)
+    }
   })
 })

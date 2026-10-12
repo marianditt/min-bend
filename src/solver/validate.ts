@@ -21,10 +21,11 @@ function isFiniteVec(v: unknown): v is [number, number] {
  *  - n is an integer >= 2
  *  - all coordinates are finite
  *  - start/end orientations are non-zero vectors
+ *  - drawnPts entries (when present) are finite [x,y] pairs
  */
 export function validateInput(input: ProblemInput): ValidationIssue[] {
   const issues: ValidationIssue[] = []
-  const { n, start, end, startDir, endDir } = input
+  const { n, start, end, startDir, endDir, drawnPts } = input
 
   if (!Number.isInteger(n) || n < 2) {
     issues.push({ field: 'n', message: 'Number of points must be an integer ≥ 2.' })
@@ -54,6 +55,18 @@ export function validateInput(input: ProblemInput): ValidationIssue[] {
       field: 'endDir',
       message: `End orientation must be a non-zero vector (length > ${EPS_STABILIZE}).`,
     })
+  }
+
+  // Validate drawnPts entries when present
+  if (Array.isArray(drawnPts)) {
+    for (let i = 0; i < drawnPts.length; i++) {
+      if (!isFiniteVec(drawnPts[i])) {
+        issues.push({
+          field: 'general',
+          message: `Drawn point ${i} must be a finite [x, y] pair.`,
+        })
+      }
+    }
   }
 
   return issues

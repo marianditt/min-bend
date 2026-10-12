@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { computeSegments } from '../solver/forces'
 import type { Frame, FrameSet, Vec2 } from '../solver/types'
+import { usePrefersDark } from './canvasKit'
 
 export interface SegmentPlotProps {
   frameSet: FrameSet
@@ -172,19 +173,6 @@ function draw(
     }
     ctx.stroke()
   }
-}
-
-function usePrefersDark(): boolean {
-  const [dark, setDark] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches,
-  )
-  useEffect(() => {
-    const query = window.matchMedia('(prefers-color-scheme: dark)')
-    const onChange = () => setDark(query.matches)
-    query.addEventListener('change', onChange)
-    return () => query.removeEventListener('change', onChange)
-  }, [])
-  return dark
 }
 
 export function SegmentPlot({ frameSet, frameIndex }: SegmentPlotProps) {

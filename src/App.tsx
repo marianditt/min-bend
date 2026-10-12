@@ -1,7 +1,9 @@
 import { useCallback, useState } from 'react'
 import { useSolver } from './hooks/useSolver'
+import { useSetupState } from './hooks/useSetupState'
 import { Player } from './player/Player'
 import { Sidebar } from './ui/Sidebar'
+import { PoseEditor } from './ui/PoseEditor'
 import type { PhysicsConstants, ProblemInput } from './solver/types'
 
 function formatEnergy(ke: number): string {
@@ -24,30 +26,6 @@ function MarkIcon() {
       />
       <rect x="1.5" y="17.5" width="4" height="4" rx="1" fill="currentColor" />
       <rect x="19" y="15" width="4" height="4" rx="1" fill="currentColor" />
-    </svg>
-  )
-}
-
-function ChainIllustration() {
-  return (
-    <svg
-      className="stage-illustration"
-      viewBox="0 0 120 120"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M12 96 Q60 20 108 96"
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-      />
-      <circle cx="31.2" cy="71.7" r="3" fill="currentColor" />
-      <circle cx="50.4" cy="59.5" r="3" fill="currentColor" />
-      <circle cx="69.6" cy="59.5" r="3" fill="currentColor" />
-      <circle cx="88.8" cy="71.7" r="3" fill="currentColor" />
-      <rect x="6" y="90" width="12" height="12" rx="2.5" fill="currentColor" />
-      <rect x="102" y="90" width="12" height="12" rx="2.5" fill="currentColor" />
     </svg>
   )
 }
@@ -105,6 +83,7 @@ function App() {
   const { compute, cancel, state } = useSolver()
   const { status, progress, iteration, ke, result, error } = state
   const [playerKey, setPlayerKey] = useState(0)
+  const setup = useSetupState()
 
   const handleCompute = useCallback(
     (input: ProblemInput, constants: PhysicsConstants) => {
@@ -138,6 +117,10 @@ function App() {
           resultIterations={resultIterations}
           termination={termination}
           error={error}
+          input={setup.input}
+          constants={setup.constants}
+          onInputChange={setup.setInput}
+          onConstantsChange={setup.setConstants}
           onCompute={handleCompute}
           onCancel={cancel}
         />
@@ -156,21 +139,16 @@ function App() {
           ) : status === 'done' && result ? (
             <Player key={playerKey} frameSet={result} />
           ) : (
-            <div className="stage-center">
-              <ChainIllustration />
-              <h2 className="stage-center__title">
-                {status === 'error'
-                  ? 'Computation failed'
-                  : status === 'cancelled'
-                    ? 'Computation cancelled'
-                    : 'Ready to compute'}
-              </h2>
-              <p className="stage-center__text">
-                {status === 'error' && error
-                  ? error
-                  : 'Configure the endpoints, orientations, and interior-point count in the sidebar, then press Compute. The solver relaxes the chain in a background worker and hands back a frame set to play.'}
-              </p>
-            </div>
+            <PoseEditor
+              input={setup.input}
+              onAddPoint={setup.addDrawn}
+              onRemoveLast={setup.removeLastDrawn}
+              onClear={setup.clearDrawn}
+              onUndo={setup.undo}
+              onRedo={setup.redo}
+              canUndo={setup.canUndo}
+              canRedo={setup.canRedo}
+            />
           )}
         </main>
       </div>

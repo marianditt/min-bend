@@ -20,17 +20,13 @@ export interface SidebarProps {
   error: string | null
   onCompute: (input: ProblemInput, constants: PhysicsConstants) => void
   onCancel: () => void
+  input: ProblemInput
+  constants: PhysicsConstants
+  onInputChange: (next: ProblemInput) => void
+  onConstantsChange: (next: PhysicsConstants) => void
 }
 
 type VecKey = 'start' | 'end' | 'startDir' | 'endDir'
-
-const DEFAULT_INPUT: ProblemInput = {
-  n: 6,
-  start: [0, 0],
-  end: [0, 0],
-  startDir: [0, 1],
-  endDir: [0, -1],
-}
 
 interface ConstantSpec {
   key: keyof PhysicsConstants
@@ -201,9 +197,11 @@ export function Sidebar({
   error,
   onCompute,
   onCancel,
+  input,
+  constants,
+  onInputChange,
+  onConstantsChange,
 }: SidebarProps) {
-  const [input, setInput] = useState<ProblemInput>(DEFAULT_INPUT)
-  const [constants, setConstants] = useState<PhysicsConstants>(DEFAULT_CONSTANTS)
   const [advancedOpen, setAdvancedOpen] = useState(false)
 
   const running = status === 'running'
@@ -220,15 +218,14 @@ export function Sidebar({
   const constProblem = useMemo(() => constantProblem(constants), [constants])
   const canCompute = issues.length === 0 && constProblem === null && !running
 
-  const setVec = (key: VecKey, axis: 0 | 1, component: number) =>
-    setInput((prev) => {
-      const pair: Vec2 = [prev[key][0], prev[key][1]]
-      pair[axis] = component
-      return { ...prev, [key]: pair }
-    })
+  const setVec = (key: VecKey, axis: 0 | 1, component: number) => {
+  const newVec: Vec2 = [input[key][0], input[key][1]]
+  newVec[axis] = component
+  onInputChange({ ...input, [key]: newVec })
+}
 
-  const setConstant = (key: keyof PhysicsConstants, value: number) =>
-    setConstants((prev) => ({ ...prev, [key]: value }))
+const setConstant = (key: keyof PhysicsConstants, value: number) =>
+  onConstantsChange({ ...constants, [key]: value })
 
   const percent = Math.round(progress * 100)
   const blockers: string[] = []
@@ -251,7 +248,7 @@ export function Sidebar({
           min={2}
           disabled={running}
           error={byField.get('n') ?? null}
-          onChange={(value) => setInput((prev) => ({ ...prev, n: value }))}
+          onChange={(value) => onInputChange({ ...input, n: value })}
         />
 
         <VectorField
@@ -329,7 +326,7 @@ export function Sidebar({
               <button
                 type="button"
                 className="btn btn--ghost btn--sm"
-                onClick={() => setConstants(DEFAULT_CONSTANTS)}
+                onClick={() => onConstantsChange(DEFAULT_CONSTANTS)}
                 title="Restore all constants to their default values"
               >
                 Reset to defaults

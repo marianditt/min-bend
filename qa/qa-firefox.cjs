@@ -55,7 +55,11 @@ function check(name, cond, extra = '') {
 
     check('App title', (await page.textContent('h1.app__title')).includes('Minimum-Bend'))
     check('Sidebar visible', await page.isVisible('aside.sidebar'))
-    check('Stage placeholder', await page.isVisible('.stage-center'))
+    check('Setup editor visible', await page.isVisible('.pose-editor'))
+    check(
+      'Editor counter starts at 0 / 6',
+      (await page.textContent('.pose-editor__counter')).trim() === '0 / 6 points placed',
+    )
     check('Default input n=6', (await fieldInput('Interior points (n)').inputValue()) === '6')
 
     // Default problem is now a closed loop anchored at the origin (start=end=[0,0])
@@ -81,6 +85,29 @@ function check(name, cond, extra = '') {
     await page.waitForTimeout(200)
     check('Validation: Compute re-enabled after fix', await computeBtn.isEnabled())
     await page.screenshot({ path: shot('qa-2-idle.png') })
+
+    // --- Setup editor: click to place points, undo/redo, clear ---
+    const editorCounter = async () => (await page.textContent('.pose-editor__counter')).trim()
+    const editorCanvas = page.locator('.pose-editor__canvas canvas')
+    const editorBox = await editorCanvas.boundingBox()
+    check('Editor: canvas present', !!editorBox)
+    if (editorBox) {
+      const atFrac = (fx, fy) => ({
+        x: Math.round(editorBox.width * fx),
+        y: Math.round(editorBox.height * fy),
+      })
+      await editorCanvas.click({ position: atFrac(0.4, 0.5) })
+      check('Editor: click places 1 / 6', (await editorCounter()) === '1 / 6 points placed', await editorCounter())
+      await editorCanvas.click({ position: atFrac(0.55, 0.6) })
+      check('Editor: click places 2 / 6', (await editorCounter()) === '2 / 6 points placed', await editorCounter())
+      await page.locator('.pose-editor__action[data-action="undo"]').click()
+      check('Editor: undo -> 1 / 6', (await editorCounter()) === '1 / 6 points placed', await editorCounter())
+      await page.locator('.pose-editor__action[data-action="redo"]').click()
+      check('Editor: redo -> 2 / 6', (await editorCounter()) === '2 / 6 points placed', await editorCounter())
+      await page.locator('.pose-editor__action[data-action="clear"]').click()
+      check('Editor: clear -> 0 / 6', (await editorCounter()) === '0 / 6 points placed', await editorCounter())
+    }
+    await page.screenshot({ path: shot('qa-2b-editor.png') })
 
     // --- Default compute -> success ---
     await computeBtn.click()
@@ -254,9 +281,9 @@ function check(name, cond, extra = '') {
     console.log(`      (cancel run was at ${runningPct.trim()} when cancelled)`)
     await page.locator('aside button:has-text("Cancel")').click()
     await page.waitForSelector('.notice--warn', { timeout: 8000 })
-    check('Cancel: cancelled notice shown', await page.isVisible('.notice--warn'))
-    const stageTitle = await page.textContent('.stage-center__title').catch(() => '')
-    check('Cancel: stage shows cancelled', /cancelled/i.test(stageTitle), stageTitle.trim())
+    const warnText = await page.textContent('.notice--warn').catch(() => '')
+    check('Cancel: cancelled notice shown', /cancelled/i.test(warnText), warnText.trim())
+    check('Cancel: setup editor restored', await page.isVisible('.pose-editor'))
     check('Cancel: Compute re-enabled', await computeBtn.isEnabled())
     await page.screenshot({ path: shot('qa-5-cancelled.png') })
 

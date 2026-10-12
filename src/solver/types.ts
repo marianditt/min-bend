@@ -16,6 +16,9 @@ export interface ProblemInput {
   startDir: Vec2
   /** Direction of the last segment (p_{N-1} - p_{N-2}). Normalized by the solver. */
   endDir: Vec2
+  /** Interior points the user drew in the setup editor, in order (length k, 1..n).
+   *  When present, the solver seeds p_1..p_k from these and fills the rest linearly. */
+  drawnPts?: Vec2[]
 }
 
 /** Tunable physics / solver constants (exposed under "Advanced"). */
