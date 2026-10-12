@@ -153,10 +153,11 @@ export function computeAcceleration(
   pts: Vec2[],
   vel: Vec2[],
   constants: PhysicsConstants,
+  referenceLength?: number,
 ): Vec2[] {
   const n = pts.length - 2 // number of free points
   const { lengths, unitVecs } = computeSegments(pts)
-  const L = computeReferenceLength(lengths)
+  const L = referenceLength !== undefined ? referenceLength : computeReferenceLength(lengths)
 
   const accel: Vec2[] = new Array(pts.length)
   for (let i = 0; i < pts.length; i++) accel[i] = [0, 0]

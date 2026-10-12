@@ -36,6 +36,13 @@ export interface Curve {
   n: number
   /** Per-span user free points; length should equal fixPoints.length - 1. */
   spans: Vec2[][]
+  /**
+   * Optional target total path length (sum of every segment length in the
+   * curve's concatenated polyline). When set, the solver targets the uniform
+   * per-segment length `targetLength / (spans * (n + 1))` instead of the
+   * geometric mean. null/absent = no constraint.
+   */
+  targetLength?: number | null
 }
 
 /** The whole multi-curve setup authored by the user. */

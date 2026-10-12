@@ -11,6 +11,7 @@ import {
 } from './forces'
 import { CancelledError, previewPose, solve } from './solve'
 import { createFrameBuffer } from './frameBuffer'
+import { totalSegmentCount } from './curve'
 import { DEFAULT_CONSTANTS, type Frame, type Setup, type Vec2 } from './types'
 import { validateSetup } from './validate'
 
@@ -565,5 +566,126 @@ describe('previewPose', () => {
       const frame0 = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit).frames[0]
       expect(previewPose(setup)).toEqual(frame0.curves)
     }
+  })
+})
+
+describe('target path length', () => {
+  const pathLength = (p: Vec2[]): number => {
+    let total = 0
+    for (let i = 0; i + 1 < p.length; i++) {
+      total += Math.hypot(p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1])
+    }
+    return total
+  }
+
+  it('counts spans * (n + 1) segments', () => {
+    expect(totalSegmentCount(setup1(6, [0, 0], [0, 0], [0, 1], [0, -1]).curves[0])).toBe(7)
+    expect(
+      totalSegmentCount({
+        n: 2,
+        fixPoints: [
+          { pos: [0, 0], orientation: null },
+          { pos: [5, 0], orientation: null },
+          { pos: [10, 0], orientation: null },
+        ],
+        spans: [[], []],
+      }),
+    ).toBe(6)
+  })
+
+  it('adds a bend tension through the reference-length override', () => {
+    const chain: Vec2[] = [
+      [0, 0],
+      [1, 1],
+      [2, 0],
+    ]
+    const vel = zeroVel(3)
+    const neutral = computeAcceleration(chain, vel, DEFAULT_CONSTANTS)
+    const outward = computeAcceleration(chain, vel, DEFAULT_CONSTANTS, 5)
+    const inward = computeAcceleration(chain, vel, DEFAULT_CONSTANTS, 0.5)
+    expect(outward[1][1]).toBeGreaterThan(neutral[1][1])
+    expect(inward[1][1]).toBeLessThan(neutral[1][1])
+  })
+
+  it('drives a loop toward the target total length', () => {
+    const target = 12
+    const setup = setup1(6, [0, 0], [0, 0], [0, 1], [0, -1])
+    setup.curves[0].targetLength = target
+    const result = solve(
+      setup,
+      { ...DEFAULT_CONSTANTS, epsilon: 1e-9, settleFrames: 40, maxIter: 200000 },
+      plainInit,
+    )
+    const total = pathLength(pts(result.frames[result.frames.length - 1]))
+    expect(Math.abs(total - target) / target).toBeLessThan(0.05)
+  })
+
+  it('undershoots an infeasible target without producing NaN', () => {
+    const setup = setup1(3, [0, 0], [10, 0], [1, 0], [1, 0])
+    setup.curves[0].targetLength = 1
+    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 2000 }, plainInit)
+    const last = pts(result.frames[result.frames.length - 1])
+    expect(last.every((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]))).toBe(true)
+    expect(pathLength(last)).toBeGreaterThanOrEqual(10 - 1e-6)
+  })
+
+  it('drives a multi-span curve toward the target total length', () => {
+    const setup: Setup = {
+      curves: [
+        {
+          n: 2,
+          fixPoints: [
+            { pos: [0, 0], orientation: null },
+            { pos: [5, 0], orientation: null },
+            { pos: [10, 0], orientation: null },
+          ],
+          spans: [[], []],
+          targetLength: 14,
+        },
+      ],
+    }
+    const result = solve(
+      setup,
+      { ...DEFAULT_CONSTANTS, epsilon: 1e-9, settleFrames: 40, maxIter: 200000 },
+      { random: () => 1 },
+    )
+    const total = pathLength(pts(result.frames[result.frames.length - 1]))
+    expect(Math.abs(total - 14) / 14).toBeLessThan(0.1)
+  })
+
+  it('ignores the target when there are no interior points', () => {
+    const setup = setup1(0, [0, 0], [10, 0], [1, 0], [1, 0])
+    setup.curves[0].targetLength = 50
+    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 5 }, plainInit)
+    expect(pts(result.frames[0])).toEqual([[0, 0], [10, 0]])
+  })
+
+  it('produces identical frames when targetLength is null vs absent', () => {
+    const base = setup1(4, [0, 0], [10, 0], [0, 1], [0, -1])
+    const withNull = setup1(4, [0, 0], [10, 0], [0, 1], [0, -1])
+    withNull.curves[0].targetLength = null
+    const a = solve(base, { ...DEFAULT_CONSTANTS, maxIter: 20 }, plainInit)
+    const b = solve(withNull, { ...DEFAULT_CONSTANTS, maxIter: 20 }, plainInit)
+    expect(b.frames).toEqual(a.frames)
+  })
+})
+
+describe('targetLength validation', () => {
+  const withTarget = (value: number | null): Setup => {
+    const setup = setup1(3, [0, 0], [10, 0], [1, 0], [1, 0])
+    setup.curves[0].targetLength = value
+    return setup
+  }
+
+  it('accepts a positive target and null', () => {
+    expect(validateSetup(withTarget(8))).toEqual([])
+    expect(validateSetup(withTarget(null))).toEqual([])
+  })
+
+  it('rejects zero, negative, NaN and Infinity', () => {
+    expect(validateSetup(withTarget(0))[0].field).toBe('targetLength:0')
+    expect(validateSetup(withTarget(-3))[0].field).toBe('targetLength:0')
+    expect(validateSetup(withTarget(NaN))[0].field).toBe('targetLength:0')
+    expect(validateSetup(withTarget(Infinity))[0].field).toBe('targetLength:0')
   })
 })

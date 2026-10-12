@@ -31,3 +31,10 @@ export function fixIndices(curve: Curve): number[] {
   for (let i = 0; i < curve.fixPoints.length; i += 1) indices.push(i * (n + 1))
   return indices
 }
+
+/** Total segment count of a curve's concatenated polyline: spans * (n + 1). */
+export function totalSegmentCount(curve: Curve): number {
+  const n = Math.max(0, Math.floor(curve.n))
+  const fixPointCount = Array.isArray(curve.fixPoints) ? curve.fixPoints.length : 0
+  return Math.max(0, fixPointCount - 1) * (n + 1)
+}

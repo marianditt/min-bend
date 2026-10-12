@@ -45,6 +45,14 @@ export function validateSetup(setup: Setup): ValidationIssue[] {
       issues.push({ field: `n:${ci}`, message: `${label}: interior points must be an integer ≥ 0.` })
     }
 
+    const target = curve.targetLength
+    if (target !== null && target !== undefined && (!Number.isFinite(target) || target <= 0)) {
+      issues.push({
+        field: `targetLength:${ci}`,
+        message: `${label}: target path length must be a positive number (or leave it unset).`,
+      })
+    }
+
     if (!Array.isArray(curve.fixPoints) || curve.fixPoints.length < 2) {
       issues.push({ field: `fixPoints:${ci}`, message: `${label}: needs at least 2 fix points.` })
       return

@@ -10,7 +10,7 @@ import {
   verifyFinite,
 } from './forces'
 import { createFrameBuffer } from './frameBuffer'
-import { freeSlotsFor } from './curve'
+import { freeSlotsFor, totalSegmentCount } from './curve'
 
 /** Thrown by solve() when shouldCancel() returns true. */
 export class CancelledError extends Error {
@@ -100,6 +100,28 @@ function curvePointCount(specs: SpanSpec[], range: CurveRange): number {
   let count = 1
   for (let s = range.start; s < range.start + range.count; s++) count += specs[s].n + 1
   return count
+}
+
+/**
+ * Per-span reference-length override derived from each curve's optional
+ * targetLength: target / total segment count. Undefined keeps the span's
+ * geometric-mean reference (no target).
+ */
+function buildSpanReferenceLengths(
+  setup: Setup,
+  curveRanges: CurveRange[],
+): (number | undefined)[] {
+  const refs: (number | undefined)[] = []
+  for (let ci = 0; ci < curveRanges.length; ci++) {
+    const range = curveRanges[ci]
+    const curve = setup.curves[ci]
+    const target = curve?.targetLength
+    const segments = curve ? totalSegmentCount(curve) : 0
+    const reference =
+      target != null && Number.isFinite(target) && segments > 0 ? target / segments : undefined
+    for (let s = 0; s < range.count; s++) refs[range.start + s] = reference
+  }
+  return refs
 }
 
 function reassembleCurve(spans: SpanState[], range: CurveRange): Vec2[] {
@@ -286,6 +308,7 @@ export function solve(
 
   const { specs, curveRanges } = normalizeSetup(setup)
   const spans = specs.map((spec) => initializeSpan(spec, random))
+  const spanReferences = buildSpanReferenceLengths(setup, curveRanges)
   const curvePointCounts = curveRanges.map((range) => curvePointCount(specs, range))
   const N = curvePointCounts.reduce((sum, count) => sum + count, 0)
 
@@ -308,8 +331,9 @@ export function solve(
       throw new CancelledError()
     }
 
-    for (const span of spans) {
-      const accel = computeAcceleration(span.pts, span.vel, constants)
+    for (let si = 0; si < spans.length; si++) {
+      const span = spans[si]
+      const accel = computeAcceleration(span.pts, span.vel, constants, spanReferences[si])
       verifyFinite(span.pts, span.vel, accel)
 
       const nFree = span.pts.length - 2
