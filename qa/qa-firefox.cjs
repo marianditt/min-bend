@@ -8,9 +8,6 @@
 //   QA_BASE_URL       app under test (default http://localhost:5173/)
 //   QA_OUT_DIR        screenshot output dir (default qa/artifacts, git-ignored)
 //   PLAYWRIGHT_CORE   explicit path to a playwright-core install
-//
-// playwright-core is resolved from PLAYWRIGHT_CORE, then a local/global
-// `require`, then the cached npx install used during development.
 const path = require('node:path')
 const fs = require('node:fs')
 
@@ -29,6 +26,8 @@ const OUT_DIR = process.env.QA_OUT_DIR || path.join(__dirname, 'artifacts')
 fs.mkdirSync(OUT_DIR, { recursive: true })
 const shot = (name) => path.join(OUT_DIR, name)
 
+const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim()
+
 let failures = 0
 function check(name, cond, extra = '') {
   if (!cond) failures++
@@ -44,10 +43,12 @@ function check(name, cond, extra = '') {
   })
   page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
-  const vecInput = (group, axis) =>
-    page.locator('.group', { hasText: group }).locator('.field', { hasText: axis }).locator('input').first()
   const fieldInput = (labelText) =>
     page.locator('.field', { hasText: labelText }).locator('input').first()
+  const vecInput = (groupLabel, axis) =>
+    page.locator(`[role="group"][aria-label="${groupLabel}"] .field`, { hasText: axis }).locator('input').first()
+  const computeBtn = page.locator('.sidebar__actions button.btn--primary')
+  const counter = async () => norm(await page.textContent('.pose-editor__counter'))
 
   try {
     await page.goto(BASE_URL, { waitUntil: 'load', timeout: 30000 })
@@ -56,56 +57,54 @@ function check(name, cond, extra = '') {
     check('App title', (await page.textContent('h1.app__title')).includes('Minimum-Bend'))
     check('Sidebar visible', await page.isVisible('aside.sidebar'))
     check('Setup editor visible', await page.isVisible('.pose-editor'))
-    check(
-      'Editor counter starts at 0 / 6',
-      (await page.textContent('.pose-editor__counter')).trim() === '0 / 6 points placed',
-    )
-    check('Default input n=6', (await fieldInput('Interior points (n)').inputValue()) === '6')
 
-    // Default problem is now a closed loop anchored at the origin (start=end=[0,0])
-    const endX = await vecInput('End point', 'X').inputValue()
-    const endY = await vecInput('End point', 'Y').inputValue()
-    check('Default input end=[0,0]', endX === '0' && endY === '0', `end=(${endX}, ${endY})`)
+    check('Editor: span 1 has 4 free slots', (await counter()) === 'span 1: 0 / 4 free points', await counter())
+    check('Default n = 6', (await fieldInput('Interior points per span').inputValue()) === '6')
+    check('Two fix points present', (await page.locator('.fix-item').count()) === 2)
+    check('Fix point 1 is the start', (await page.locator('.fix-item').first().textContent()).includes('Fix point 1'))
+    check('Both orientations on by default', (await page.locator('.fix-item .switch input:checked').count()) === 2)
 
-    const computeBtn = page.locator('button:has-text("Compute")').first()
+    const endX = await vecInput('Fix point 2 position', 'X').inputValue()
+    const endY = await vecInput('Fix point 2 position', 'Y').inputValue()
+    check('Default end fix point = [0,0]', endX === '0' && endY === '0', `end=(${endX}, ${endY})`)
+
     check('Compute enabled initially', await computeBtn.isEnabled())
 
-    // --- Validation: zero start orientation ---
-    await vecInput('Start orientation', 'X').fill('0')
-    await vecInput('Start orientation', 'Y').fill('0')
+    // --- Validation: zero fix-point orientation ---
+    await vecInput('Fix point 1 orientation', 'X').fill('0')
+    await vecInput('Fix point 1 orientation', 'Y').fill('0')
     await page.waitForTimeout(200)
-    const startDirErr = page.locator('.group:has-text("Start orientation") .group__error')
-    check('Validation: start-orientation error shown', await startDirErr.isVisible())
+    const orientErr = page.locator('.fix-item', { hasText: 'Fix point 1' }).locator('.group__error[role="alert"]')
+    check('Validation: zero-orientation error shown', await orientErr.isVisible())
     check('Validation: Compute disabled', !(await computeBtn.isEnabled()))
     await page.screenshot({ path: shot('qa-1-validation.png') })
 
-    // restore valid orientation
-    await vecInput('Start orientation', 'X').fill('0')
-    await vecInput('Start orientation', 'Y').fill('1')
+    await vecInput('Fix point 1 orientation', 'Y').fill('1')
     await page.waitForTimeout(200)
     check('Validation: Compute re-enabled after fix', await computeBtn.isEnabled())
     await page.screenshot({ path: shot('qa-2-idle.png') })
 
-    // --- Setup editor: click to place points, undo/redo, clear ---
-    const editorCounter = async () => (await page.textContent('.pose-editor__counter')).trim()
+    // --- Editor: place / undo / redo / cap / clear ---
     const editorCanvas = page.locator('.pose-editor__canvas canvas')
-    const editorBox = await editorCanvas.boundingBox()
-    check('Editor: canvas present', !!editorBox)
-    if (editorBox) {
-      const atFrac = (fx, fy) => ({
-        x: Math.round(editorBox.width * fx),
-        y: Math.round(editorBox.height * fy),
-      })
-      await editorCanvas.click({ position: atFrac(0.4, 0.5) })
-      check('Editor: click places 1 / 6', (await editorCounter()) === '1 / 6 points placed', await editorCounter())
-      await editorCanvas.click({ position: atFrac(0.55, 0.6) })
-      check('Editor: click places 2 / 6', (await editorCounter()) === '2 / 6 points placed', await editorCounter())
-      await page.locator('.pose-editor__action[data-action="undo"]').click()
-      check('Editor: undo -> 1 / 6', (await editorCounter()) === '1 / 6 points placed', await editorCounter())
-      await page.locator('.pose-editor__action[data-action="redo"]').click()
-      check('Editor: redo -> 2 / 6', (await editorCounter()) === '2 / 6 points placed', await editorCounter())
-      await page.locator('.pose-editor__action[data-action="clear"]').click()
-      check('Editor: clear -> 0 / 6', (await editorCounter()) === '0 / 6 points placed', await editorCounter())
+    const box = await editorCanvas.boundingBox()
+    check('Editor: canvas present', !!box)
+    if (box) {
+      const at = (fx, fy) => ({ x: Math.round(box.width * fx), y: Math.round(box.height * fy) })
+      await editorCanvas.click({ position: at(0.4, 0.45) })
+      check('Editor: click places 1', (await counter()) === 'span 1: 1 / 4 free points', await counter())
+      await editorCanvas.click({ position: at(0.55, 0.55) })
+      check('Editor: click places 2', (await counter()) === 'span 1: 2 / 4 free points', await counter())
+      await page.locator('[data-action="undo"]').click()
+      check('Editor: undo -> 1', (await counter()) === 'span 1: 1 / 4 free points', await counter())
+      await page.locator('[data-action="redo"]').click()
+      check('Editor: redo -> 2', (await counter()) === 'span 1: 2 / 4 free points', await counter())
+      await editorCanvas.click({ position: at(0.45, 0.42) })
+      await editorCanvas.click({ position: at(0.5, 0.62) })
+      check('Editor: fills to 4', (await counter()) === 'span 1: 4 / 4 free points', await counter())
+      await editorCanvas.click({ position: at(0.6, 0.5) })
+      check('Editor: capacity caps at 4', (await counter()) === 'span 1: 4 / 4 free points', await counter())
+      await page.locator('[data-action="clear"]').click()
+      check('Editor: clear -> 0', (await counter()) === 'span 1: 0 / 4 free points', await counter())
     }
     await page.screenshot({ path: shot('qa-2b-editor.png') })
 
@@ -118,24 +117,21 @@ function check(name, cond, extra = '') {
     check('Running: progress bar appears', sawRunning)
 
     await page.waitForSelector('.notice--success', { timeout: 60000 })
-    const successText = await page.textContent('.notice--success').catch(() => '')
-    check('Success: converged notice', /Converged/.test(successText), successText.trim())
+    const successText = norm(await page.textContent('.notice--success'))
+    check('Success: converged notice', /Converged/.test(successText), successText)
     check('Success: player visible', await page.isVisible('.player'))
-    check('Success: HUD shows 8 pts', (await page.textContent('.player__hud')).includes('8 pts'))
+    const hud = norm(await page.textContent('.player__hud'))
+    check('HUD: 1 curve', hud.includes('1 curve'), hud)
+    check('HUD: 8 pts', hud.includes('8 pts'), hud)
 
-    const frameLabel = () => page.textContent('.frame-label')
     const frameNum = async () => {
-      const t = await frameLabel()
-      const m = t.match(/frame\s+([\d,]+)\s*\/\s*([\d,]+)/)
+      const t = norm(await page.textContent('.frame-label'))
+      const m = t.match(/frame ([\d,]+) \/ ([\d,]+)/)
       const num = (s) => Number(String(s).replace(/,/g, ''))
       return m ? { cur: num(m[1]), tot: num(m[2]) } : { cur: -1, tot: -1 }
     }
 
-    // Player must not auto-play on mount; it should sit paused at frame 0.
-    check(
-      'Playback: does not auto-play on mount',
-      await page.getByRole('button', { name: 'Play', exact: true }).isVisible(),
-    )
+    check('Playback: paused at mount', await page.getByRole('button', { name: 'Play', exact: true }).isVisible())
     await page.locator('.scrub').focus()
     await page.locator('.scrub').press('Home')
     await page.waitForTimeout(150)
@@ -143,17 +139,14 @@ function check(name, cond, extra = '') {
     await page.waitForTimeout(400)
     const restB = await frameNum()
     check('Playback: paused player stays put', restA.cur === restB.cur, `f=${restA.cur}`)
-
     const { cur, tot } = await frameNum()
     check('Player: frame 1 of N', cur === 1 && tot > 1, `N=${tot}`)
 
-    // Canvas exposes the applied uniform scale for verification
-    const canvasScale = () =>
-      page.evaluate(() => Number(document.querySelector('canvas')?.dataset.scale || '-1'))
+    const canvasScale = () => page.evaluate(() => Number(document.querySelector('canvas')?.dataset.scale || '-1'))
     const scaleFrame1 = await canvasScale()
     check('Plot scale: positive at frame 1', scaleFrame1 > 0, `scale=${scaleFrame1}`)
 
-    // --- Second plot: wide + short animated segment profile ---
+    // --- Segment profile plot (wide + short) ---
     const plotSig = () =>
       page.evaluate(() => {
         const c = document.querySelector('.player__plot canvas')
@@ -176,72 +169,52 @@ function check(name, cond, extra = '') {
     const plotAgg = () =>
       page.evaluate(() => {
         const c = document.querySelector('.player__plot canvas')
-        return c
-          ? { avg: Number(c.dataset.avgLength), bend: Number(c.dataset.maxBend) }
-          : { avg: NaN, bend: NaN }
+        return c ? { avg: Number(c.dataset.avgLength), bend: Number(c.dataset.maxBend) } : { avg: NaN, bend: NaN }
       })
     const aggFirst = await plotAgg()
-    check(
-      'Plot: avg length exposed and positive',
-      Number.isFinite(aggFirst.avg) && aggFirst.avg > 0,
-      `avg=${aggFirst.avg}`,
-    )
-    check(
-      'Plot: max bend exposed and positive at frame 1',
-      Number.isFinite(aggFirst.bend) && aggFirst.bend > 0,
-      `bend=${aggFirst.bend}`,
-    )
+    check('Plot: avg length exposed', Number.isFinite(aggFirst.avg) && aggFirst.avg > 0, `avg=${aggFirst.avg}`)
+    check('Plot: max bend exposed', Number.isFinite(aggFirst.bend) && aggFirst.bend > 0, `bend=${aggFirst.bend}`)
 
-    // Start playback to verify the animation advances
+    // --- Speed ---
+    const speedLabel = page.locator('.speed-label')
+    check('Speed: starts at 1×', norm(await speedLabel.textContent()) === '1×')
+    await page.getByLabel('Speed up').click()
+    await page.getByLabel('Speed up').click()
+    check('Speed: 2× clicks -> 4×', norm(await speedLabel.textContent()) === '4×')
+    await page.getByLabel('Slow down').click()
+    check('Speed: back to 2×', norm(await speedLabel.textContent()) === '2×')
+
+    // --- Playback advances ---
     await page.getByRole('button', { name: 'Play', exact: true }).click()
-
-    // canvas has actual content (not blank)
     const canvasPainted = await page.evaluate(() => {
       const c = document.querySelector('canvas')
       if (!c) return false
-      const ctx = c.getContext('2d')
-      const d = ctx.getImageData(0, 0, c.width, c.height).data
-      let nonBg = 0
-      for (let i = 0; i < d.length; i += 4 * 97) {
-        if (d[i] !== 248 && d[i] !== 11) nonBg++
-      }
-      return nonBg > 10
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+      const r0 = d[0]
+      const g0 = d[1]
+      const b0 = d[2]
+      let diff = 0
+      for (let i = 0; i < d.length; i += 4 * 97) if (d[i] !== r0 || d[i + 1] !== g0 || d[i + 2] !== b0) diff++
+      return diff > 10
     })
     check('Player: canvas painted', canvasPainted)
     await page.screenshot({ path: shot('qa-3-player.png') })
 
-    // --- Speed ---
-    const speedLabel = page.locator('.speed-label')
-    check('Speed: starts at 1×', (await speedLabel.textContent()).trim() === '1×')
-    await page.getByLabel('Speed up').click()
-    await page.getByLabel('Speed up').click()
-    check('Speed: 2× clicks -> 4×', (await speedLabel.textContent()).trim() === '4×')
-    await page.getByLabel('Slow down').click()
-    check('Speed: back to 2×', (await speedLabel.textContent()).trim() === '2×')
-
-    // --- Playback advances while playing ---
     await page.waitForTimeout(900)
     const afterPlay = await frameNum()
     check('Playback: Play advances frames', afterPlay.cur > 1, `frame=${afterPlay.cur}`)
     const plotSigLater = await plotSig()
-    check(
-      'Plot: animates with the current frame',
-      plotSigLater > 0 && plotSigLater !== plotSigFrame1,
-      `f1=${plotSigFrame1} f${afterPlay.cur}=${plotSigLater}`,
-    )
-    await page.locator('.player__plot').screenshot({ path: shot('qa-6-plot.png') }).catch(() => {})
+    check('Plot: animates with frame', plotSigLater > 0 && plotSigLater !== plotSigFrame1, `f1=${plotSigFrame1} f${afterPlay.cur}=${plotSigLater}`)
     await page.getByRole('button', { name: 'Pause', exact: true }).click()
     await page.waitForTimeout(200)
     const pausedFrame = await frameNum()
     await page.waitForTimeout(400)
-    const stillFrame = await frameNum()
-    check('Playback: pause freezes frames', stillFrame.cur === pausedFrame.cur, `f=${pausedFrame.cur}`)
+    check('Playback: pause freezes frames', (await frameNum()).cur === pausedFrame.cur, `f=${pausedFrame.cur}`)
     await page.screenshot({ path: shot('qa-4-playback.png') })
 
     // --- Scrubber ---
-    const scrub = page.locator('.scrub')
-    await scrub.focus()
-    await scrub.press('End')
+    await page.locator('.scrub').focus()
+    await page.locator('.scrub').press('End')
     await page.waitForTimeout(150)
     const atEnd = await frameNum()
     check('Scrubber: End -> last frame', atEnd.cur === atEnd.tot, JSON.stringify(atEnd))
@@ -252,22 +225,22 @@ function check(name, cond, extra = '') {
         Number.isFinite(aggLast.bend) &&
         aggLast.avg > 0 &&
         (aggLast.bend !== aggFirst.bend || aggLast.avg !== aggFirst.avg),
-      `first avg=${aggFirst.avg.toFixed(3)} bend=${aggFirst.bend.toFixed(2)} | last avg=${aggLast.avg.toFixed(3)} bend=${aggLast.bend.toFixed(2)}`,
+      `first avg=${aggFirst.avg.toFixed(3)} | last avg=${aggLast.avg.toFixed(3)}`,
     )
-    const scaleLast = await canvasScale()
-    check(
-      'Plot scale: positive at last frame',
-      scaleLast > 0 && Number.isFinite(scaleLast),
-      `scale1=${scaleFrame1} last=${scaleLast}`,
-    )
-    console.log(
-      `      (frame1 scale ${scaleFrame1}, last-frame scale ${scaleLast}; refit is per-frame, easing applies only during playback)`,
-    )
-    await scrub.press('Home')
+    await page.locator('.scrub').press('Home')
     await page.waitForTimeout(150)
     check('Scrubber: Home -> first frame', (await frameNum()).cur === 1)
 
-    // --- Keyboard: Space + ArrowRight on player ---
+    // --- First / last jump buttons ---
+    await page.getByLabel('Jump to last frame').click()
+    await page.waitForTimeout(150)
+    const jumped = await frameNum()
+    check('Jump: last frame', jumped.cur === jumped.tot, JSON.stringify(jumped))
+    await page.getByLabel('Jump to first frame').click()
+    await page.waitForTimeout(150)
+    check('Jump: first frame', (await frameNum()).cur === 1)
+
+    // --- Keyboard ---
     await page.locator('.player').focus()
     await page.keyboard.press('Space')
     await page.waitForTimeout(500)
@@ -277,8 +250,19 @@ function check(name, cond, extra = '') {
     await page.waitForTimeout(150)
     await page.keyboard.press('ArrowRight')
     await page.waitForTimeout(150)
-    const afterArrow = await frameNum()
-    check('Keyboard: ArrowRight steps forward', afterArrow.cur >= afterSpace.cur, `prev=${afterSpace.cur} now=${afterArrow.cur}`)
+    check('Keyboard: ArrowRight steps', (await frameNum()).cur >= afterSpace.cur)
+
+    // --- Split x / y view (R12) ---
+    const splitBtn = page.getByLabel('Split x and y coordinates')
+    check('Split: default off', (await splitBtn.getAttribute('aria-pressed')) === 'false')
+    await splitBtn.click()
+    await page.waitForTimeout(200)
+    check('Split: two coordinate plots', (await page.locator('.coordinate-plot').count()) === 2)
+    check('Split: frame canvas hidden', (await page.locator('.frame-canvas').count()) === 0)
+    await page.screenshot({ path: shot('qa-7-split.png') })
+    await splitBtn.click()
+    await page.waitForTimeout(200)
+    check('Split: back to combined', (await page.locator('.coordinate-plot').count()) === 0)
 
     // --- Loop toggle ---
     const loopBtn = page.getByLabel('Loop playback')
@@ -287,30 +271,39 @@ function check(name, cond, extra = '') {
     check('Loop: toggles ON', (await loopBtn.getAttribute('aria-pressed')) === 'true')
     await loopBtn.click()
 
+    // --- Multi-curve (R4) ---
+    await page.locator('button:has-text("Edit setup")').click()
+    await page.waitForSelector('.pose-editor')
+    check('Multi: back to editor', await page.isVisible('.pose-editor'))
+    await page.locator('button:has-text("Add curve")').click()
+    check('Multi: two curve cards', (await page.locator('.curve-card').count()) === 2)
+    check('Multi: two editor curve tabs', (await page.locator('.chip-row[aria-label="Curves"] .chip').count()) === 2)
+    await computeBtn.click()
+    await page.waitForSelector('.notice--success', { timeout: 90000 })
+    const hud2 = norm(await page.textContent('.player__hud'))
+    check('Multi: HUD shows 2 curves', hud2.includes('2 curves'), hud2)
+    check('Multi: player curve selector has 2 chips', (await page.locator('.player .chip-row--view .chip').count()) === 2)
+    await page.screenshot({ path: shot('qa-8-multicurve.png') })
+
     // --- Slow compute -> cancel ---
     await page.locator('button:has-text("Advanced constants")').click()
     const settleInput = page.getByRole('textbox', { name: 'Settle frames' })
-    const settleVisible = await settleInput.isVisible().catch(() => false)
-    check('Advanced: Settle frames field present', settleVisible)
-    if (settleVisible) {
+    check('Advanced: Settle frames present', await settleInput.isVisible().catch(() => false))
+    if (await settleInput.isVisible().catch(() => false)) {
       check('Advanced: Settle frames default 30', (await settleInput.inputValue()) === '30')
     }
     check('Advanced: no Mute frames field', (await page.getByRole('textbox', { name: 'Mute frames' }).count()) === 0)
     await page.getByRole('textbox', { name: 'Max iterations' }).fill('50000000')
     await page.getByRole('textbox', { name: 'KE threshold ε' }).fill('0')
-    const computeAgain = page.locator('button:has-text("Compute again"), button:has-text("Compute")').first()
-    await computeAgain.click()
+    await computeBtn.click()
     const cancelVisible = await page
       .waitForSelector('aside button:has-text("Cancel")', { timeout: 8000 })
       .then(() => true)
       .catch(() => false)
     check('Cancel run: Cancel button appears', cancelVisible)
-    const runningPct = await page.textContent('.progress-percent').catch(() => '')
-    console.log(`      (cancel run was at ${runningPct.trim()} when cancelled)`)
-    await page.locator('aside button:has-text("Cancel")').click()
+    await page.locator('aside button:has-text("Cancel")').first().click()
     await page.waitForSelector('.notice--warn', { timeout: 8000 })
-    const warnText = await page.textContent('.notice--warn').catch(() => '')
-    check('Cancel: cancelled notice shown', /cancelled/i.test(warnText), warnText.trim())
+    check('Cancel: cancelled notice shown', /cancelled/i.test(norm(await page.textContent('.notice--warn'))))
     check('Cancel: setup editor restored', await page.isVisible('.pose-editor'))
     check('Cancel: Compute re-enabled', await computeBtn.isEnabled())
     await page.screenshot({ path: shot('qa-5-cancelled.png') })

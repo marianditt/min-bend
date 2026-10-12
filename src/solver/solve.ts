@@ -1,11 +1,12 @@
-import type { Frame, FrameMeta, FrameSet, PhysicsConstants, ProblemInput, Vec2 } from './types'
+import type { Frame, FrameMeta, FrameSet, PhysicsConstants, Setup, Vec2 } from './types'
 import { DEFAULT_CONSTANTS, EPS_STABILIZE } from './types'
-import { validateInput } from './validate'
+import { validateSetup } from './validate'
 import {
   computeAcceleration,
   computeKineticEnergy,
-  copyPoints,
   enforceOrientationConstraints,
+  length,
+  normalize,
   verifyFinite,
 } from './forces'
 import { createFrameBuffer } from './frameBuffer'
@@ -25,156 +26,244 @@ export interface SolveOptions {
   random?: () => number
 }
 
+/** Initial-pose jitter amplitude, as a fraction of the segment spacing. */
+const INIT_JITTER = 0.15
+
+/** Fallback spacing when a span's anchors coincide (chord length ~ 0). */
+const FALLBACK_SPACING = 1
+
+/** A normalized span: fix endpoints plus the optional tangent directions. */
+interface SpanSpec {
+  a: Vec2
+  b: Vec2
+  n: number
+  aDir: Vec2 | null
+  bDir: Vec2 | null
+  free: Vec2[]
+}
+
+interface SpanState {
+  pts: Vec2[]
+  vel: Vec2[]
+  aDir: Vec2 | null
+  bDir: Vec2 | null
+}
+
+interface CurveRange {
+  start: number
+  count: number
+}
+
+interface NormalizedSetup {
+  specs: SpanSpec[]
+  curveRanges: CurveRange[]
+}
+
 /**
- * Deterministic (no-jitter) N-point base pose layout. Covers all three cases:
- *   (a) drawnPts present — seeds from drawing, fills rest linearly toward E.
- *   (b) no-draw, general — chord layout with no jitter (D >= EPS_STABILIZE).
- *   (c) no-draw, coincident anchors — circular layout around the anchor (D < EPS_STABILIZE).
- * Returns positions only; caller adds velocities and runs enforceOrientationConstraints.
+ * Flatten a setup into independent spans (one per consecutive fix-point pair).
+ * Each span carries its own tangent directions: a span's start direction is the
+ * start fix point's orientation and its end direction is the end fix point's
+ * orientation. `free` is clamped to at most `n` points.
  */
-function computeBasePositions(input: ProblemInput): Vec2[] {
-  const { n, start, end, startDir, endDir, drawnPts } = input
-  const N = n + 2
-  const d0 = normalize(startDir)
-  const d1 = normalize(endDir)
+function normalizeSetup(setup: Setup): NormalizedSetup {
+  const specs: SpanSpec[] = []
+  const curveRanges: CurveRange[] = []
 
-  const D = Math.hypot(end[0] - start[0], end[1] - start[1])
+  for (const curve of setup.curves) {
+    const start = specs.length
+    const n = Math.max(0, Math.floor(curve.n))
+    const fixPoints = Array.isArray(curve.fixPoints) ? curve.fixPoints : []
 
-  // Spacing between consecutive points along the chord / circle
-  const o = D < EPS_STABILIZE ? FALLBACK_SPACING : D / (n + 1)
-
-  const pts: Vec2[] = new Array(N)
-
-  // Fixed endpoints
-  pts[0] = [start[0], start[1]]
-  pts[N - 1] = [end[0], end[1]]
-
-  if (Array.isArray(drawnPts) && drawnPts.length > 0) {
-    // --- Case (a): drawn points present ---
-    const k = Math.min(drawnPts.length, n) // clamp 1..n (k >= 1 since drawnPts non-empty)
-
-    // p_1 .. p_k from the drawing
-    for (let i = 1; i <= k; i++) {
-      pts[i] = [drawnPts[i - 1][0], drawnPts[i - 1][1]]
+    for (let s = 0; s + 1 < fixPoints.length; s++) {
+      const fpA = fixPoints[s]
+      const fpB = fixPoints[s + 1]
+      const spanFree = Array.isArray(curve.spans?.[s]) ? curve.spans[s] : []
+      specs.push({
+        a: fpA.pos,
+        b: fpB.pos,
+        n,
+        aDir: fpA.orientation ?? null,
+        bDir: fpB.orientation ?? null,
+        free: spanFree.slice(0, n),
+      })
     }
 
-    // End-side interior target: E = end - o*d1
-    const E: Vec2 = [end[0] - o * d1[0], end[1] - o * d1[1]]
+    curveRanges.push({ start, count: specs.length - start })
+  }
 
-    // p_{k+1} .. p_n: linear interpolation from p_k to E
-    if (k < n) {
-      const pk = pts[k]
-      for (let i = k + 1; i <= n; i++) {
-        const t = (i - k) / (n - k)
-        pts[i] = [
-          pk[0] + t * (E[0] - pk[0]),
-          pk[1] + t * (E[1] - pk[1]),
-        ]
+  return { specs, curveRanges }
+}
+
+/** +1 for the endpoint shared with the next span, plus the first span's first point. */
+function curvePointCount(specs: SpanSpec[], range: CurveRange): number {
+  let count = 1
+  for (let s = range.start; s < range.start + range.count; s++) count += specs[s].n + 1
+  return count
+}
+
+function reassembleCurve(spans: SpanState[], range: CurveRange): Vec2[] {
+  const out: Vec2[] = []
+  for (let s = range.start; s < range.start + range.count; s++) {
+    const pts = spans[s].pts
+    const from = s === range.start ? 0 : 1
+    for (let k = from; k < pts.length; k++) out.push([pts[k][0], pts[k][1]])
+  }
+  return out
+}
+
+/**
+ * Interior slot indices that the user may place, i.e. all slots minus the bound
+ * slots adjacent to an oriented fix point.
+ */
+function freeSlots(n: number, hasStart: boolean, hasEnd: boolean): number[] {
+  const slots: number[] = []
+  for (let k = 1; k <= n; k++) {
+    if (hasStart && k === 1) continue
+    if (hasEnd && k === n) continue
+    slots.push(k)
+  }
+  return slots
+}
+
+/** Fill unset interior slots by repeatedly splitting the largest spatial gap. */
+function gapFill(pts: Vec2[], unsetSlots: number[]): void {
+  const unset = new Set(unsetSlots)
+  const known: number[] = []
+  for (let k = 0; k < pts.length; k++) if (!unset.has(k)) known.push(k)
+  const remaining = [...unsetSlots].sort((x, y) => x - y)
+
+  while (remaining.length > 0) {
+    known.sort((x, y) => x - y)
+    let bestGap = -1
+    let bestPair = -1
+    for (let g = 0; g + 1 < known.length; g++) {
+      const k1 = known[g]
+      const k2 = known[g + 1]
+      if (!remaining.some((s) => s > k1 && s < k2)) continue
+      const dist = Math.hypot(pts[k2][0] - pts[k1][0], pts[k2][1] - pts[k1][1])
+      if (dist > bestGap) {
+        bestGap = dist
+        bestPair = g
       }
     }
-  } else if (D < EPS_STABILIZE) {
-    // --- Case (c): no-draw, coincident anchors ---
-    // Circular layout around the anchor (start == end).
-    // Set first/last free points along the direction rays before laying out the circle.
-    pts[1] = [start[0] + o * d0[0], start[1] + o * d0[1]]
-    pts[n] = [end[0] - o * d1[0], end[1] - o * d1[1]]
+    if (bestPair < 0) break
+    const k1 = known[bestPair]
+    const k2 = known[bestPair + 1]
+    const between = remaining.filter((s) => s > k1 && s < k2)
+    const slot = between[Math.floor((between.length - 1) / 2)]
+    pts[slot] = [(pts[k1][0] + pts[k2][0]) / 2, (pts[k1][1] + pts[k2][1]) / 2]
+    known.push(slot)
+    remaining.splice(remaining.indexOf(slot), 1)
+  }
+}
 
-    const th_start = Math.atan2(d0[1], d0[0])
-    const th_end = Math.atan2(-d1[1], -d1[0])
-    let sweep = ((th_end - th_start) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI)
-    if (sweep < EPS_STABILIZE) sweep = 2 * Math.PI // go the long way around
-    for (let k = 2; k < n; k++) {
-      const th_k = th_start + sweep * (k - 1) / (n - 1)
-      pts[k] = [start[0] + o * Math.cos(th_k), start[1] + o * Math.sin(th_k)]
+/**
+ * Deterministic (no-jitter) layout for one span. Generalizes the original
+ * single-chain layout to optional end orientations:
+ *   - user free points occupy the free slots in order, remainder gap-filled;
+ *   - otherwise a chord layout is used, or a circular layout when the anchors
+ *     coincide (D < EPS_STABILIZE);
+ *   - an n = 1 span bound at both ends is left to the orientation projection.
+ */
+function computeSpanBase(spec: SpanSpec, random: () => number): Vec2[] {
+  const { a, b, n, aDir, bDir, free } = spec
+  const N = n + 2
+  const pts: Vec2[] = new Array(N)
+  pts[0] = [a[0], a[1]]
+  pts[N - 1] = [b[0], b[1]]
+
+  if (n === 0) return pts
+
+  const dx = b[0] - a[0]
+  const dy = b[1] - a[1]
+  const D = Math.hypot(dx, dy)
+  const coincident = D < EPS_STABILIZE
+  const o = coincident ? FALLBACK_SPACING : D / (n + 1)
+
+  const d0raw = aDir ? normalize(aDir) : null
+  const d1raw = bDir ? normalize(bDir) : null
+  const d0 = d0raw && length(d0raw) >= EPS_STABILIZE ? d0raw : null
+  const d1 = d1raw && length(d1raw) >= EPS_STABILIZE ? d1raw : null
+  const hasStart = d0 !== null
+  const hasEnd = d1 !== null
+
+  if (n === 1) {
+    if (hasStart && hasEnd) {
+      pts[1] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
+    } else if (hasStart) {
+      pts[1] = [a[0] + o * d0![0], a[1] + o * d0![1]]
+    } else if (hasEnd) {
+      pts[1] = [b[0] - o * d1![0], b[1] - o * d1![1]]
+    } else {
+      pts[1] = coincident ? [a[0] + o, a[1]] : [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
     }
-  } else {
-    // --- Case (b): no-draw, general chord (D >= EPS_STABILIZE) ---
-    // First and last free points
-    pts[1] = [start[0] + o * d0[0], start[1] + o * d0[1]]
-    pts[n] = [end[0] - o * d1[0], end[1] - o * d1[1]]
+    if (!(hasStart && hasEnd) && free.length > 0) pts[1] = [free[0][0], free[0][1]]
+    return pts
+  }
 
-    // Interior free points: linear interpolation between p1 and pn
+  if (coincident && free.length === 0) {
+    const thStart = hasStart ? Math.atan2(d0![1], d0![0]) : 0
+    const thEnd = hasEnd ? Math.atan2(-d1![1], -d1![0]) : thStart + 2 * Math.PI
+    let sweep = ((thEnd - thStart) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI)
+    if (sweep < EPS_STABILIZE) sweep = 2 * Math.PI
+    pts[1] = [a[0] + o * Math.cos(thStart), a[1] + o * Math.sin(thStart)]
+    pts[n] = [a[0] + o * Math.cos(thStart + sweep), a[1] + o * Math.sin(thStart + sweep)]
     for (let k = 2; k < n; k++) {
-      const t = (k - 1) / (n - 1)
-      pts[k] = [
-        pts[1][0] + t * (pts[n][0] - pts[1][0]),
-        pts[1][1] + t * (pts[n][1] - pts[1][1]),
-      ]
+      const thK = thStart + (sweep * (k - 1)) / (n - 1)
+      pts[k] = [a[0] + o * Math.cos(thK), a[1] + o * Math.sin(thK)]
+    }
+    return pts
+  }
+
+  const cux = coincident ? 0 : dx / D
+  const cuy = coincident ? 0 : dy / D
+  const p1: Vec2 = hasStart ? [a[0] + o * d0![0], a[1] + o * d0![1]] : [a[0] + o * cux, a[1] + o * cuy]
+  const pn: Vec2 = hasEnd ? [b[0] - o * d1![0], b[1] - o * d1![1]] : [b[0] - o * cux, b[1] - o * cuy]
+  pts[1] = p1
+  pts[n] = pn
+  for (let k = 2; k < n; k++) {
+    const t = (k - 1) / (n - 1)
+    pts[k] = [p1[0] + t * (pn[0] - p1[0]), p1[1] + t * (pn[1] - p1[1])]
+  }
+
+  if (free.length > 0) {
+    const slots = freeSlots(n, hasStart, hasEnd)
+    const k = Math.min(free.length, slots.length)
+    for (let j = 0; j < k; j++) pts[slots[j]] = [free[j][0], free[j][1]]
+    const unset = slots.slice(k)
+    if (unset.length > 0) gapFill(pts, unset)
+    return pts
+  }
+
+  if (!coincident) {
+    const dp: Vec2 = [pn[0] - p1[0], pn[1] - p1[1]]
+    const dpLen = Math.hypot(dp[0], dp[1])
+    if (dpLen >= EPS_STABILIZE) {
+      const perp: Vec2 = [-dp[1] / dpLen, dp[0] / dpLen]
+      const lo = hasStart ? 2 : 1
+      const hi = hasEnd ? n - 1 : n
+      for (let k = lo; k <= hi; k++) {
+        const amp = INIT_JITTER * o * (2 * random() - 1)
+        pts[k] = [pts[k][0] + amp * perp[0], pts[k][1] + amp * perp[1]]
+      }
     }
   }
 
   return pts
 }
 
-/** Initial-pose jitter amplitude, as a fraction of the segment spacing. */
-const INIT_JITTER = 0.15
-
-/** Fallback spacing when anchors coincide (chord length ~ 0). */
-const FALLBACK_SPACING = 1
-
-/**
- * Initialize points and velocities.
- * - Uses computeBasePositions for the deterministic base layout.
- * - Adds perpendicular jitter when drawnPts is absent/empty and the general (non-coincident) branch applies.
- * - Zero velocities; then runs enforceOrientationConstraints.
- */
-function initializePoints(input: ProblemInput, random: () => number): { pts: Vec2[]; vel: Vec2[] } {
-  const { n, start, end, startDir, endDir, drawnPts } = input
-  const N = n + 2
-
-  const D = Math.hypot(end[0] - start[0], end[1] - start[1])
-
-  // Spacing constant used for jitter amplitude and circular layout.
-  const o = D < EPS_STABILIZE ? FALLBACK_SPACING : D / (n + 1)
-
-  // Deterministic base positions (no jitter)
-  const pts: Vec2[] = computeBasePositions(input)
-
-  // All velocities start at zero
-  const vel: Vec2[] = new Array(N)
-  for (let i = 0; i < N; i++) {
-    vel[i] = [0, 0]
-  }
-
-  // Add perpendicular jitter only when:
-  //   - drawnPts is absent/empty, AND
-  //   - the general (non-coincident) branch applies (D >= EPS_STABILIZE)
-  if (!Array.isArray(drawnPts) || drawnPts.length === 0) {
-    if (D >= EPS_STABILIZE) {
-      // General path: chord with perpendicular jitter on interior free points p_2 .. p_{n-1}
-      const p1 = pts[1]
-      const pn = pts[n]
-      const dp = [pn[0] - p1[0], pn[1] - p1[1]]
-      const dpLen = Math.hypot(dp[0], dp[1])
-      const perp: Vec2 | null = dpLen >= EPS_STABILIZE ? [-dp[1] / dpLen, dp[0] / dpLen] : null
-
-      for (let k = 2; k < n; k++) {
-        const t = (k - 1) / (n - 1)
-        let x = p1[0] + t * dp[0]
-        let y = p1[1] + t * dp[1]
-        if (perp) {
-          const amp = INIT_JITTER * o * (2 * random() - 1)
-          x += amp * perp[0]
-          y += amp * perp[1]
-        }
-        pts[k] = [x, y]
-        vel[k] = [0, 0]
-      }
-    }
-    // If D < EPS_STABILIZE (coincident anchors), the circular layout from
-    // computeBasePositions already has zero velocities — no jitter added.
-  }
-
-  // Then run the orientation projection (hard constraints)
-  enforceOrientationConstraints(pts, vel, startDir, endDir)
-
-  return { pts, vel }
+function initializeSpan(spec: SpanSpec, random: () => number): SpanState {
+  const pts = computeSpanBase(spec, random)
+  const vel: Vec2[] = new Array(pts.length)
+  for (let i = 0; i < pts.length; i++) vel[i] = [0, 0]
+  enforceOrientationConstraints(pts, vel, spec.aDir, spec.bDir)
+  return { pts, vel, aDir: spec.aDir, bDir: spec.bDir }
 }
 
-function normalize(v: Vec2): Vec2 {
-  const len = Math.hypot(v[0], v[1])
-  if (len < EPS_STABILIZE) return [0, 0]
-  return [v[0] / len, v[1] / len]
+function totalKineticEnergy(spans: SpanState[]): number {
+  let ke = 0
+  for (const span of spans) ke += computeKineticEnergy(span.vel)
+  return ke
 }
 
 /** Report progress with ~50ms throttling, but always at least once and exactly 1.0 at end. */
@@ -214,82 +303,68 @@ function makeProgressReporter(
 }
 
 export function solve(
-  input: ProblemInput,
+  setup: Setup,
   constants: PhysicsConstants = DEFAULT_CONSTANTS,
   options: SolveOptions = {},
 ): FrameSet {
-  // Validate input
-  const issues = validateInput(input)
+  const issues = validateSetup(setup)
   if (issues.length > 0) {
-    throw new Error(`Invalid input: ${issues.map((i) => i.message).join('; ')}`)
+    throw new Error(`Invalid setup: ${issues.map((i) => i.message).join('; ')}`)
   }
 
   const { onProgress, shouldCancel, random = Math.random } = options
-  const { n, startDir, endDir } = input
-  const N = n + 2
   const { h, epsilon, settleFrames, maxIter } = constants
 
-  // Initialize
-  const { pts, vel } = initializePoints(input, random)
+  const { specs, curveRanges } = normalizeSetup(setup)
+  const spans = specs.map((spec) => initializeSpan(spec, random))
+  const curvePointCounts = curveRanges.map((range) => curvePointCount(specs, range))
+  const N = curvePointCounts.reduce((sum, count) => sum + count, 0)
 
-  // Record initial frame (i = 0)
+  const captureCurves = (): Vec2[][] => curveRanges.map((range) => reassembleCurve(spans, range))
+
   const buffer = createFrameBuffer()
-  const initialKe = computeKineticEnergy(vel)
-  buffer.add({ i: 0, ke: initialKe, pts: copyPoints(pts) })
+  const initialKe = totalKineticEnergy(spans)
+  buffer.add({ i: 0, ke: initialKe, curves: captureCurves() })
 
-  // Progress reporting
   const { report, finalize } = makeProgressReporter(onProgress, maxIter)
-  report(0, initialKe, true) // Force initial report
+  report(0, initialKe, true)
 
   let termination: 'ke' | 'maxIter' = 'maxIter'
-  let kePeak = initialKe
   let settleStreak = 0
   let lastIter = 0
   let lastKe = initialKe
 
-  // Main simulation loop
   for (let i = 1; i <= maxIter; i++) {
-    // Cancellation check
     if (shouldCancel?.()) {
       throw new CancelledError()
     }
 
-    // Compute acceleration
-    const accel = computeAcceleration(pts, vel, constants)
+    for (const span of spans) {
+      const accel = computeAcceleration(span.pts, span.vel, constants)
+      verifyFinite(span.pts, span.vel, accel)
 
-    // Verify finite before integration
-    verifyFinite(pts, vel, accel)
+      const nFree = span.pts.length - 2
+      for (let k = 1; k <= nFree; k++) {
+        span.vel[k][0] += h * accel[k][0]
+        span.vel[k][1] += h * accel[k][1]
+        span.pts[k][0] += h * span.vel[k][0]
+        span.pts[k][1] += h * span.vel[k][1]
+      }
 
-    // Semi-implicit Euler integration (free points only: 1..n)
-    for (let k = 1; k <= n; k++) {
-      vel[k][0] += h * accel[k][0]
-      vel[k][1] += h * accel[k][1]
-      pts[k][0] += h * vel[k][0]
-      pts[k][1] += h * vel[k][1]
+      enforceOrientationConstraints(span.pts, span.vel, span.aDir, span.bDir)
+      verifyFinite(span.pts, span.vel, accel)
     }
 
-    // Enforce orientation constraints (hard constraints)
-    enforceOrientationConstraints(pts, vel, startDir, endDir)
-
-    // Verify finite after constraints
-    verifyFinite(pts, vel, accel)
-
-    // Compute kinetic energy
-    const ke = computeKineticEnergy(vel)
-    if (ke > kePeak) kePeak = ke
-
+    const ke = totalKineticEnergy(spans)
     if (ke < epsilon) settleStreak += 1
     else settleStreak = 0
 
-    // Record frame (the buffer decimates once the cap is exceeded)
-    buffer.add({ i, ke, pts: copyPoints(pts) })
+    buffer.add({ i, ke, curves: captureCurves() })
     lastIter = i
     lastKe = ke
 
-    // Progress report
     report(i, ke)
 
-    // Termination check
     if (settleStreak >= settleFrames) {
       termination = 'ke'
       break
@@ -302,15 +377,14 @@ export function solve(
 
   finalize()
 
-  // Append the final frame if the stride skipped it, then decimate to the cap
-  // while preserving the first and last frames.
-  const last: Frame = { i: lastIter, ke: lastKe, pts: copyPoints(pts) }
+  const last: Frame = { i: lastIter, ke: lastKe, curves: captureCurves() }
   const frames = buffer.finish(last)
 
   const meta: FrameMeta = {
-    n,
+    curvePointCounts,
     N,
-    input,
+    curveCount: curveRanges.length,
+    input: setup,
     constants,
     termination,
     frameCount: frames.length,
@@ -324,15 +398,9 @@ export function solve(
   }
 }
 
-/** Deterministic (no-jitter) N-point initial pose for the setup editor preview. */
-export function previewPose(input: ProblemInput): Vec2[] {
-  const pts = computeBasePositions(input)
-  // Build a zero velocity vector and enforce orientation constraints,
-  // exactly as initializePoints does for the no-draw/jitter=0 case.
-  const vel: Vec2[] = new Array(pts.length)
-  for (let i = 0; i < pts.length; i++) {
-    vel[i] = [0, 0]
-  }
-  enforceOrientationConstraints(pts, vel, input.startDir, input.endDir)
-  return pts
+/** Deterministic (no-jitter) per-curve initial pose for the setup editor preview. */
+export function previewPose(setup: Setup): Vec2[][] {
+  const { specs, curveRanges } = normalizeSetup(setup)
+  const spans = specs.map((spec) => initializeSpan(spec, () => 0.5))
+  return curveRanges.map((range) => reassembleCurve(spans, range))
 }

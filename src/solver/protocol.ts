@@ -1,10 +1,10 @@
 // Web Worker message protocol shared by the solver worker and the UI hook.
 // FROZEN: both sides are built against these types.
 
-import type { FrameSet, PhysicsConstants, ProblemInput } from './types'
+import type { FrameSet, PhysicsConstants, Setup } from './types'
 
 export type WorkerRequest =
-  | { type: 'solve'; input: ProblemInput; constants: PhysicsConstants }
+  | { type: 'solve'; input: Setup; constants: PhysicsConstants }
   | { type: 'cancel' }
 
 export type WorkerResponse =

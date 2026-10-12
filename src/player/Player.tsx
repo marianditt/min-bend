@@ -3,6 +3,7 @@ import type { KeyboardEvent } from 'react'
 import type { FrameSet } from '../solver/types'
 import { FrameCanvas } from './FrameCanvas'
 import { SegmentPlot } from './SegmentPlot'
+import { CoordinatePlot } from './CoordinatePlot'
 import './player.css'
 
 export interface PlayerProps {
@@ -42,20 +43,20 @@ function PauseIcon() {
   )
 }
 
-function StepBackIcon() {
+function FirstIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M17 6v12L9 12l8-6Z" />
       <rect x="5.5" y="6" width="2.4" height="12" rx="1" />
+      <path d="M19 6v12l-9-6 9-6Z" />
     </svg>
   )
 }
 
-function StepForwardIcon() {
+function LastIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M7 6v12l8-6-8-6Z" />
       <rect x="16.1" y="6" width="2.4" height="12" rx="1" />
+      <path d="M5 6v12l9-6-9-6Z" />
     </svg>
   )
 }
@@ -74,6 +75,15 @@ function LoopIcon() {
   )
 }
 
+function SplitIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="7" rx="1.4" stroke="currentColor" strokeWidth="1.7" />
+      <rect x="3" y="13" width="18" height="7" rx="1.4" stroke="currentColor" strokeWidth="1.7" />
+    </svg>
+  )
+}
+
 /**
  * Playback widget for a {@link FrameSet}. Remounted per compute run by the
  * parent (via a `key`), so each run starts cleanly at frame 0.
@@ -86,6 +96,8 @@ export function Player({ frameSet }: PlayerProps) {
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
   const [loop, setLoop] = useState(false)
+  const [split, setSplit] = useState(false)
+  const [curveIndex, setCurveIndex] = useState(0)
 
   // Mirrors of state read inside the animation loop without re-subscribing.
   const indexRef = useRef(0)
@@ -103,6 +115,14 @@ export function Player({ frameSet }: PlayerProps) {
     indexRef.current = next
     setIndex(next)
   }, [])
+
+  const jumpTo = useCallback(
+    (target: number) => {
+      setPlaying(false)
+      commitIndex(Math.min(Math.max(target, 0), lastIndex))
+    },
+    [commitIndex, lastIndex],
+  )
 
   const step = useCallback(
     (delta: number) => {
@@ -186,11 +206,13 @@ export function Player({ frameSet }: PlayerProps) {
   const currentFrame = frameSet.frames[safeIndex]
   const ke = currentFrame?.ke ?? 0
   const canStep = total > 1
+  const curveCount = Math.max(frameSet.meta.curveCount, 1)
+  const safeCurve = Math.min(Math.max(curveIndex, 0), curveCount - 1)
 
   const legend = useMemo(
     () => [
-      { className: 'start', label: 'start p₀' },
-      { className: 'end', label: 'end pₙ₊₁' },
+      { className: 'start', label: 'start' },
+      { className: 'end', label: 'end' },
       { className: 'point', label: 'interior point' },
       { className: 'orient', label: 'orientation' },
     ],
@@ -198,13 +220,7 @@ export function Player({ frameSet }: PlayerProps) {
   )
 
   return (
-    <div
-      className="player"
-      role="group"
-      aria-label="Chain playback"
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-    >
+    <div className="player" role="group" aria-label="Chain playback" tabIndex={0} onKeyDown={onKeyDown}>
       <div className="player__stagebar">
         <div className="player__legend">
           {legend.map((item) => (
@@ -216,17 +232,44 @@ export function Player({ frameSet }: PlayerProps) {
         </div>
 
         <div className="player__hud">
+          <span>
+            {curveCount} curve{curveCount > 1 ? 's' : ''}
+          </span>
           <span>{frameSet.meta.N} pts</span>
           <span>KE {formatEnergy(ke)}</span>
         </div>
       </div>
 
+      {curveCount > 1 ? (
+        <div className="chip-row chip-row--view" role="tablist" aria-label="Curve to plot">
+          {Array.from({ length: curveCount }, (_, ci) => (
+            <button
+              key={ci}
+              type="button"
+              role="tab"
+              aria-selected={ci === safeCurve}
+              className={`chip chip--sm ${ci === safeCurve ? 'is-active' : ''}`}
+              onClick={() => setCurveIndex(ci)}
+            >
+              Curve {ci + 1}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div className="player__stage">
-        <FrameCanvas frameSet={frameSet} frameIndex={safeIndex} playing={playing} />
+        {split ? (
+          <div className="player__split">
+            <CoordinatePlot frameSet={frameSet} frameIndex={safeIndex} axis={0} />
+            <CoordinatePlot frameSet={frameSet} frameIndex={safeIndex} axis={1} />
+          </div>
+        ) : (
+          <FrameCanvas frameSet={frameSet} frameIndex={safeIndex} playing={playing} />
+        )}
       </div>
 
       <div className="player__plot">
-        <SegmentPlot frameSet={frameSet} frameIndex={safeIndex} />
+        <SegmentPlot frameSet={frameSet} frameIndex={safeIndex} curveIndex={safeCurve} />
       </div>
 
       <div className="player__controls">
@@ -234,12 +277,12 @@ export function Player({ frameSet }: PlayerProps) {
           <button
             type="button"
             className="btn btn--icon"
-            onClick={() => step(-1)}
+            onClick={() => jumpTo(0)}
             disabled={!canStep || safeIndex === 0}
-            aria-label="Previous frame"
-            title="Previous frame (←)"
+            aria-label="Jump to first frame"
+            title="First frame"
           >
-            <StepBackIcon />
+            <FirstIcon />
           </button>
           <button
             type="button"
@@ -254,41 +297,38 @@ export function Player({ frameSet }: PlayerProps) {
           <button
             type="button"
             className="btn btn--icon"
-            onClick={() => step(1)}
+            onClick={() => jumpTo(lastIndex)}
             disabled={!canStep || safeIndex >= lastIndex}
-            aria-label="Next frame"
-            title="Next frame (→)"
+            aria-label="Jump to last frame"
+            title="Last frame"
           >
-            <StepForwardIcon />
+            <LastIcon />
           </button>
 
           <div className="player__spacer" />
 
           <div className="player__group" role="group" aria-label="Playback speed">
-            <button
-              type="button"
-              className="btn btn--sm"
-              onClick={slowDown}
-              disabled={speed <= MIN_SPEED}
-              aria-label="Slow down"
-              title="Slow down (÷2)"
-            >
+            <button type="button" className="btn btn--sm" onClick={slowDown} disabled={speed <= MIN_SPEED} aria-label="Slow down" title="Slow down (÷2)">
               −
             </button>
             <span className="speed-label" aria-live="polite">
               {formatSpeed(speed)}
             </span>
-            <button
-              type="button"
-              className="btn btn--sm"
-              onClick={speedUp}
-              disabled={speed >= MAX_SPEED}
-              aria-label="Speed up"
-              title="Speed up (×2)"
-            >
+            <button type="button" className="btn btn--sm" onClick={speedUp} disabled={speed >= MAX_SPEED} aria-label="Speed up" title="Speed up (×2)">
               +
             </button>
           </div>
+
+          <button
+            type="button"
+            className={`btn btn--icon ${split ? 'is-on' : ''}`}
+            onClick={() => setSplit((prev) => !prev)}
+            aria-pressed={split}
+            aria-label="Split x and y coordinates"
+            title={split ? 'Combined view' : 'Split x / y view'}
+          >
+            <SplitIcon />
+          </button>
 
           <button
             type="button"

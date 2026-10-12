@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 import './fields.css'
 
 export interface NumberFieldProps {
   label: string
   value: number
   onChange: (value: number) => void
-  /** Increment applied by the − / + buttons. Omit to hide them. */
+  /** Increment applied by the ↑ / ↓ keys. Defaults to 1. */
   step?: number
   integer?: boolean
   min?: number
@@ -46,15 +47,16 @@ function clamp(value: number, min?: number, max?: number, integer?: boolean): nu
 }
 
 /**
- * A small controlled numeric input with an optional step stepper, inline hint,
- * and inline error. Keeps an internal text draft so partial edits like "0."
- * are not clobbered, while still normalizing on blur and on external resets.
+ * A small controlled numeric input with an inline hint and inline error. Keeps
+ * an internal text draft so partial edits like "0." are not clobbered, while
+ * still normalizing on blur and on external resets. The ↑ / ↓ keys step the
+ * value by `step`.
  */
 export function NumberField({
   label,
   value,
   onChange,
-  step,
+  step = 1,
   integer = false,
   min,
   max,
@@ -65,8 +67,6 @@ export function NumberField({
 }: NumberFieldProps) {
   const inputId = useId()
   const [draft, setDraft] = useState(() => format(value))
-  // True while the change originated from this field, so the sync effect does
-  // not overwrite the user's in-progress draft.
   const internal = useRef(false)
 
   useEffect(() => {
@@ -88,12 +88,21 @@ export function NumberField({
   }
 
   const nudge = (direction: 1 | -1) => {
-    if (step === undefined) return
     const base = Number.isFinite(value) ? value : 0
     const next = clamp(base + direction * step, min, max, integer)
     internal.current = true
     setDraft(format(next))
     onChange(next)
+  }
+
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      nudge(1)
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      nudge(-1)
+    }
   }
 
   const describedBy = error ? `${inputId}-error` : undefined
@@ -107,18 +116,6 @@ export function NumberField({
         {hint ? <span className="field__hint">{hint}</span> : null}
       </div>
       <div className="field__control">
-        {step !== undefined ? (
-          <button
-            type="button"
-            className="field__step"
-            onClick={() => nudge(-1)}
-            disabled={disabled}
-            aria-label={`Decrease ${label}`}
-            title={`Decrease ${label}`}
-          >
-            −
-          </button>
-        ) : null}
         <input
           id={inputId}
           className="field__input"
@@ -132,23 +129,11 @@ export function NumberField({
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy}
           onChange={(event) => commit(event.target.value)}
+          onKeyDown={onKeyDown}
           onBlur={() => {
-            // Restore the canonical value if the field was left incomplete.
             if (parse(draft) === undefined) setDraft(format(value))
           }}
         />
-        {step !== undefined ? (
-          <button
-            type="button"
-            className="field__step"
-            onClick={() => nudge(1)}
-            disabled={disabled}
-            aria-label={`Increase ${label}`}
-            title={`Increase ${label}`}
-          >
-            +
-          </button>
-        ) : null}
       </div>
       {error ? (
         <p className="field__error" id={describedBy}>

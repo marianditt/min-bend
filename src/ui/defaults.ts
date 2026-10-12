@@ -1,9 +1,19 @@
-import type { ProblemInput } from '../solver/types'
+import type { Setup } from '../solver/types'
 
-export const DEFAULT_INPUT: ProblemInput = {
-  n: 6,
-  start: [0, 0],
-  end: [0, 0],
-  startDir: [0, 1],
-  endDir: [0, -1],
+/**
+ * Default setup: a single curve with two oriented coincident fix points.
+ * This reproduces the original single-chain problem exactly (n = 6, start and
+ * end at the origin, start tangent +y, end tangent -y).
+ */
+export const DEFAULT_SETUP: Setup = {
+  curves: [
+    {
+      n: 6,
+      fixPoints: [
+        { pos: [0, 0], orientation: [0, 1] },
+        { pos: [0, 0], orientation: [0, -1] },
+      ],
+      spans: [[]],
+    },
+  ],
 }

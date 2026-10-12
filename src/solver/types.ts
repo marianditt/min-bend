@@ -1,24 +1,46 @@
 // Shared contract for the min-bend solver and renderer.
 // FROZEN: both the solver and the UI are built against these types.
-// Extend only additively (new optional fields). muteFrames was renamed to settleFrames when the KE gate became a consecutive-quiet-frame gate.
+//
+// The system is a set of INDEPENDENT elastic curves. Each curve is a chain of
+// fix points with `n` interior points between every consecutive pair (a span).
+// A fix point has an optional tangent orientation that binds the interior point
+// adjacent to it on each side to lie on its ray (tangent continuity).
+//
+// Extend only additively where possible.
 
 export type Vec2 = [number, number]
 
-/** User-provided problem definition from the sidebar. */
-export interface ProblemInput {
-  /** Number of free interior points. Total points N = n + 2, segments = n + 1. */
+/**
+ * An anchor of a curve: a required position with an optional tangent
+ * orientation. A non-null orientation constrains the interior point adjacent to
+ * this fix point in each neighbouring span to lie on this ray: the outgoing
+ * span's first point and the incoming span's last point.
+ */
+export interface FixPoint {
+  /** Fixed position. */
+  pos: Vec2
+  /** Tangent direction at this point, or null when free. Normalized by the solver. */
+  orientation: Vec2 | null
+}
+
+/**
+ * A single elastic curve: two or more fix points, with `n` interior points
+ * between each consecutive pair (span). `spans[i]` holds the user-placed FREE
+ * interior points for the span between fixPoints[i] and fixPoints[i+1], in
+ * order. Bound points (the interior point adjacent to an oriented fix point)
+ * are derived by the solver and are not stored here.
+ */
+export interface Curve {
+  fixPoints: FixPoint[]
+  /** Interior points per span (integer >= 0), uniform across the curve. */
   n: number
-  /** Fixed start point p_0. */
-  start: Vec2
-  /** Fixed end point p_{N-1}. */
-  end: Vec2
-  /** Direction of the first segment (p_1 - p_0). Normalized by the solver. */
-  startDir: Vec2
-  /** Direction of the last segment (p_{N-1} - p_{N-2}). Normalized by the solver. */
-  endDir: Vec2
-  /** Interior points the user drew in the setup editor, in order (length k, 1..n).
-   *  When present, the solver seeds p_1..p_k from these and fills the rest linearly. */
-  drawnPts?: Vec2[]
+  /** Per-span user free points; length should equal fixPoints.length - 1. */
+  spans: Vec2[][]
+}
+
+/** The whole multi-curve setup authored by the user. */
+export interface Setup {
+  curves: Curve[]
 }
 
 /** Tunable physics / solver constants (exposed under "Advanced"). */
@@ -64,14 +86,18 @@ export interface Frame {
   i: number
   /** Kinetic energy at this frame. */
   ke: number
-  /** All N points, fixed endpoints included, in order p_0 .. p_{N-1}. */
-  pts: Vec2[]
+  /** Per-curve point polylines (fix points + interior points), in curve order. */
+  curves: Vec2[][]
 }
 
 export interface FrameMeta {
-  n: number
+  /** Number of points per curve, aligned with Frame.curves. */
+  curvePointCounts: number[]
+  /** Number of points across all curves. */
   N: number
-  input: ProblemInput
+  /** Number of curves. */
+  curveCount: number
+  input: Setup
   constants: PhysicsConstants
   /** Why the simulation stopped. */
   termination: 'ke' | 'maxIter'

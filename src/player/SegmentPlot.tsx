@@ -6,6 +6,7 @@ import { usePrefersDark } from './canvasKit'
 export interface SegmentPlotProps {
   frameSet: FrameSet
   frameIndex: number
+  curveIndex: number
 }
 
 interface PlotTheme {
@@ -77,7 +78,7 @@ interface FrameAggregates {
  * so they are always scanned; the tail is strided to bound cost on long runs
  * (sampling is safe because length/bend vary smoothly after startup).
  */
-function scanMaxima(frames: Frame[]): SeriesMaxima {
+function scanMaxima(frames: Frame[], curveIndex: number): SeriesMaxima {
   const maxima: SeriesMaxima = { length: 0, bend: 0 }
   const total = frames.length
   if (total === 0) return maxima
@@ -85,7 +86,7 @@ function scanMaxima(frames: Frame[]): SeriesMaxima {
   const stride = Math.max(1, Math.ceil((total - head) / 1500))
   for (let i = 0; i < total; i += 1) {
     if (i >= head && (i - head) % stride !== 0) continue
-    const { lengths, bends } = analyzeFrame(frames[i].pts)
+    const { lengths, bends } = analyzeFrame(frames[i].curves[curveIndex] ?? [])
     for (const value of lengths) if (value > maxima.length) maxima.length = value
     for (const value of bends) if (value > maxima.bend) maxima.bend = value
   }
@@ -150,6 +151,7 @@ function drawGuide(
 function draw(
   frames: Frame[],
   frameIndex: number,
+  curveIndex: number,
   maxima: SeriesMaxima,
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -179,7 +181,7 @@ function draw(
 
   drawLegend(ctx, theme)
 
-  const pts = frames[frameIndex]?.pts
+  const pts = frames[frameIndex]?.curves[curveIndex]
   if (!pts || pts.length < 2) return null
 
   const { lengths, bends } = analyzeFrame(pts)
@@ -229,13 +231,13 @@ function draw(
   return { avgLength, maxBend }
 }
 
-export function SegmentPlot({ frameSet, frameIndex }: SegmentPlotProps) {
+export function SegmentPlot({ frameSet, frameIndex, curveIndex }: SegmentPlotProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const dark = usePrefersDark()
   const theme = dark ? DARK_THEME : LIGHT_THEME
-  const maxima = useMemo(() => scanMaxima(frameSet.frames), [frameSet])
+  const maxima = useMemo(() => scanMaxima(frameSet.frames, curveIndex), [frameSet, curveIndex])
 
   useEffect(() => {
     const container = containerRef.current
@@ -259,7 +261,7 @@ export function SegmentPlot({ frameSet, frameIndex }: SegmentPlotProps) {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    const aggregates = draw(frameSet.frames, frameIndex, maxima, ctx, size.width, size.height, theme)
+    const aggregates = draw(frameSet.frames, frameIndex, curveIndex, maxima, ctx, size.width, size.height, theme)
     if (aggregates) {
       canvas.dataset.avgLength = String(aggregates.avgLength)
       canvas.dataset.maxBend = String(aggregates.maxBend)
@@ -267,7 +269,7 @@ export function SegmentPlot({ frameSet, frameIndex }: SegmentPlotProps) {
       delete canvas.dataset.avgLength
       delete canvas.dataset.maxBend
     }
-  }, [frameSet, frameIndex, size, maxima, theme])
+  }, [frameSet, frameIndex, curveIndex, size, maxima, theme])
 
   return (
     <div className="segment-plot" ref={containerRef}>

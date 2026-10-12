@@ -1,13 +1,20 @@
 import { useMemo, useState } from 'react'
-import { validateInput } from '../solver/validate'
-import {
-  DEFAULT_CONSTANTS,
-  type PhysicsConstants,
-  type ProblemInput,
-  type Vec2,
-} from '../solver/types'
+import { validateSetup } from '../solver/validate'
+import { DEFAULT_CONSTANTS, type PhysicsConstants, type Setup, type Vec2 } from '../solver/types'
 import type { SolverStatus } from '../hooks/useSolver'
 import { NumberField } from './NumberField'
+import {
+  addCurve,
+  addFixPoint,
+  clearSpan,
+  freeSlotCount,
+  moveFix,
+  removeCurve,
+  removeFixPoint,
+  setCurveN,
+  setFixOrientation,
+  setFixOrientationComponent,
+} from './setupEdits'
 import './sidebar.css'
 
 export interface SidebarProps {
@@ -18,15 +25,13 @@ export interface SidebarProps {
   resultIterations: number | null
   termination: 'ke' | 'maxIter' | null
   error: string | null
-  onCompute: (input: ProblemInput, constants: PhysicsConstants) => void
+  onCompute: (setup: Setup, constants: PhysicsConstants) => void
   onCancel: () => void
-  input: ProblemInput
+  setup: Setup
   constants: PhysicsConstants
-  onInputChange: (next: ProblemInput) => void
+  onEdit: (mutator: (setup: Setup) => Setup) => void
   onConstantsChange: (next: PhysicsConstants) => void
 }
-
-type VecKey = 'start' | 'end' | 'startDir' | 'endDir'
 
 interface ConstantSpec {
   key: keyof PhysicsConstants
@@ -43,37 +48,10 @@ const CONSTANT_SPECS: ConstantSpec[] = [
   { key: 'kBend', label: 'Bend stiffness', hint: 'curvature penalty', step: 0.1, min: 0 },
   { key: 'gamma', label: 'Friction γ', hint: 'velocity damping', step: 0.05, min: 0 },
   { key: 'h', label: 'Step size', hint: 'integration dt', step: 0.005, min: 0 },
-  {
-    key: 'epsilon',
-    label: 'KE threshold ε',
-    hint: 'stop below this',
-    step: 1e-4,
-    min: 0,
-    wide: true,
-  },
-  {
-    key: 'settleFrames',
-    label: 'Settle frames',
-    hint: 'KE below ε for N frames',
-    step: 1,
-    integer: true,
-    min: 1,
-  },
-  {
-    key: 'maxIter',
-    label: 'Max iterations',
-    hint: 'safety cap',
-    step: 500,
-    integer: true,
-    min: 1,
-  },
-  {
-    key: 'maxForce',
-    label: 'Max force',
-    hint: 'per-point force cap',
-    step: 100,
-    min: 0,
-  },
+  { key: 'epsilon', label: 'KE threshold ε', hint: 'stop below this', step: 1e-4, min: 0, wide: true },
+  { key: 'settleFrames', label: 'Settle frames', hint: 'KE below ε for N frames', step: 1, integer: true, min: 1 },
+  { key: 'maxIter', label: 'Max iterations', hint: 'safety cap', step: 500, integer: true, min: 1 },
+  { key: 'maxForce', label: 'Max force', hint: 'per-point force cap', step: 100, min: 0 },
 ]
 
 function formatEnergy(ke: number): string {
@@ -109,50 +87,21 @@ function constantProblem(c: PhysicsConstants): string | null {
   return null
 }
 
-function VectorField({
+function VecInput({
   label,
-  hint,
   value,
-  onChange,
-  step,
-  error,
   disabled,
+  onChange,
 }: {
   label: string
-  hint?: string
   value: Vec2
-  onChange: (axis: 0 | 1, component: number) => void
-  step?: number
-  error?: string | null
   disabled?: boolean
+  onChange: (axis: 0 | 1, component: number) => void
 }) {
   return (
-    <div className="group">
-      <div className="group__head">
-        <span className="group__label">{label}</span>
-        {hint ? <span className="field__hint">{hint}</span> : null}
-      </div>
-      <div className="vector">
-        <NumberField
-          label="X"
-          value={value[0]}
-          step={step}
-          disabled={disabled}
-          onChange={(component) => onChange(0, component)}
-        />
-        <NumberField
-          label="Y"
-          value={value[1]}
-          step={step}
-          disabled={disabled}
-          onChange={(component) => onChange(1, component)}
-        />
-      </div>
-      {error ? (
-        <p className="group__error" role="alert">
-          {error}
-        </p>
-      ) : null}
+    <div className="vector" role="group" aria-label={label}>
+      <NumberField label="X" value={value[0]} step={0.5} disabled={disabled} onChange={(v) => onChange(0, v)} />
+      <NumberField label="Y" value={value[1]} step={0.5} disabled={disabled} onChange={(v) => onChange(1, v)} />
     </div>
   )
 }
@@ -160,12 +109,7 @@ function VectorField({
 function WarningIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M12 3.5 21 19H3l9-15.5Z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
+      <path d="M12 3.5 21 19H3l9-15.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
       <path d="M12 9.5v4.2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
       <circle cx="12" cy="16.6" r="1" fill="currentColor" />
     </svg>
@@ -176,13 +120,7 @@ function CheckIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
-      <path
-        d="m8 12.4 2.7 2.7L16 9.6"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <path d="m8 12.4 2.7 2.7L16 9.6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -197,99 +135,172 @@ export function Sidebar({
   error,
   onCompute,
   onCancel,
-  input,
+  setup,
   constants,
-  onInputChange,
+  onEdit,
   onConstantsChange,
 }: SidebarProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
-
   const running = status === 'running'
 
-  const issues = useMemo(() => validateInput(input), [input])
+  const issues = useMemo(() => validateSetup(setup), [setup])
   const byField = useMemo(() => {
     const map = new Map<string, string>()
-    for (const issue of issues) {
-      if (!map.has(issue.field)) map.set(issue.field, issue.message)
-    }
+    for (const issue of issues) if (!map.has(issue.field)) map.set(issue.field, issue.message)
     return map
   }, [issues])
 
   const constProblem = useMemo(() => constantProblem(constants), [constants])
   const canCompute = issues.length === 0 && constProblem === null && !running
 
-  const setVec = (key: VecKey, axis: 0 | 1, component: number) => {
-  const newVec: Vec2 = [input[key][0], input[key][1]]
-  newVec[axis] = component
-  onInputChange({ ...input, [key]: newVec })
-}
-
-const setConstant = (key: keyof PhysicsConstants, value: number) =>
-  onConstantsChange({ ...constants, [key]: value })
+  const setConstant = (key: keyof PhysicsConstants, value: number) =>
+    onConstantsChange({ ...constants, [key]: value })
 
   const percent = Math.round(progress * 100)
   const blockers: string[] = []
-  if (issues.length > 0) {
-    blockers.push(`${issues.length} invalid field${issues.length > 1 ? 's' : ''}`)
-  }
+  if (issues.length > 0) blockers.push(`${issues.length} invalid field${issues.length > 1 ? 's' : ''}`)
   if (constProblem) blockers.push(constProblem)
 
   return (
     <aside className="sidebar">
       <section className="sidebar__section">
-        <h2 className="sidebar__section-title">Problem</h2>
+        <div className="sidebar__section-head">
+          <h2 className="sidebar__section-title">Curves</h2>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            disabled={running}
+            onClick={() => onEdit(addCurve)}
+          >
+            + Add curve
+          </button>
+        </div>
 
-        <NumberField
-          label="Interior points (n)"
-          hint="N = n + 2"
-          value={input.n}
-          step={1}
-          integer
-          min={2}
-          disabled={running}
-          error={byField.get('n') ?? null}
-          onChange={(value) => onInputChange({ ...input, n: value })}
-        />
+        {setup.curves.map((curve, ci) => (
+          <div className="curve-card" key={ci}>
+            <div className="curve-card__head">
+              <span className="curve-card__title">Curve {ci + 1}</span>
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                disabled={running || setup.curves.length <= 1}
+                title={setup.curves.length <= 1 ? 'At least one curve is required' : 'Remove this curve'}
+                onClick={() => onEdit((s) => removeCurve(s, ci))}
+              >
+                Remove
+              </button>
+            </div>
 
-        <VectorField
-          label="Start point"
-          hint="p₀ (fixed)"
-          value={input.start}
-          step={0.5}
-          disabled={running}
-          error={byField.get('start') ?? null}
-          onChange={(axis, component) => setVec('start', axis, component)}
-        />
+            <NumberField
+              label="Interior points per span (n)"
+              hint="between each fix-point pair"
+              value={curve.n}
+              step={1}
+              integer
+              min={0}
+              disabled={running}
+              error={byField.get(`n:${ci}`) ?? null}
+              onChange={(value) => onEdit((s) => setCurveN(s, ci, value))}
+            />
 
-        <VectorField
-          label="End point"
-          hint="pₙ₊₁ (fixed)"
-          value={input.end}
-          step={0.5}
-          disabled={running}
-          error={byField.get('end') ?? null}
-          onChange={(axis, component) => setVec('end', axis, component)}
-        />
+            {byField.get(`fixPoints:${ci}`) ? (
+              <p className="group__error" role="alert">{byField.get(`fixPoints:${ci}`)}</p>
+            ) : null}
 
-        <VectorField
-          label="Start orientation"
-          hint="direction of p₁ − p₀"
-          value={input.startDir}
-          step={0.5}
-          disabled={running}
-          error={byField.get('startDir') ?? null}
-          onChange={(axis, component) => setVec('startDir', axis, component)}
-        />
+            <div className="fix-list">
+              {curve.fixPoints.map((fp, pi) => {
+                const oriented = fp.orientation !== null
+                const firstLabel = pi === 0 ? 'start' : pi === curve.fixPoints.length - 1 ? 'end' : 'joint'
+                return (
+                  <div className="fix-item" key={pi}>
+                    <div className="fix-item__head">
+                      <span className="fix-item__label">
+                        Fix point {pi + 1} <em>{firstLabel}</em>
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        disabled={running || curve.fixPoints.length <= 2}
+                        title={curve.fixPoints.length <= 2 ? 'A curve needs at least two fix points' : 'Remove fix point'}
+                        onClick={() => onEdit((s) => removeFixPoint(s, ci, pi))}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <VecInput
+                      label={`Fix point ${pi + 1} position`}
+                      value={fp.pos}
+                      disabled={running}
+                      onChange={(axis, component) => onEdit((s) => moveFix(s, ci, pi, axis, component))}
+                    />
+                    {byField.get(`fixPoint:${ci}:${pi}`) ? (
+                      <p className="group__error" role="alert">{byField.get(`fixPoint:${ci}:${pi}`)}</p>
+                    ) : null}
+                    <label className="switch">
+                      <input
+                        type="checkbox"
+                        checked={oriented}
+                        disabled={running}
+                        onChange={(event) =>
+                          onEdit((s) => setFixOrientation(s, ci, pi, event.target.checked ? [1, 0] : null))
+                        }
+                      />
+                      <span>Fix orientation (tangent)</span>
+                    </label>
+                    {oriented && fp.orientation ? (
+                      <>
+                        <VecInput
+                          label={`Fix point ${pi + 1} orientation`}
+                          value={fp.orientation}
+                          disabled={running}
+                          onChange={(axis, component) =>
+                            onEdit((s) => setFixOrientationComponent(s, ci, pi, axis, component))
+                          }
+                        />
+                        {byField.get(`orientation:${ci}:${pi}`) ? (
+                          <p className="group__error" role="alert">{byField.get(`orientation:${ci}:${pi}`)}</p>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
 
-        <VectorField
-          label="End orientation"
-          hint="direction of pₙ₊₁ − pₙ"
-          value={input.endDir}
-          step={0.5}
-          disabled={running}
-          error={byField.get('endDir') ?? null}
-          onChange={(axis, component) => setVec('endDir', axis, component)}
-        />
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              disabled={running}
+              onClick={() => onEdit((s) => addFixPoint(s, ci))}
+            >
+              + Add fix point
+            </button>
+
+            {curve.spans.length > 0 ? (
+              <ul className="span-list">
+                {curve.spans.map((span, si) => {
+                  const capacity = freeSlotCount(curve, si)
+                  return (
+                    <li className="span-row" key={si}>
+                      <span className="span-row__label">Span {si + 1}</span>
+                      <span className="span-row__count">
+                        {span.length} / {capacity} free
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        disabled={running || span.length === 0}
+                        onClick={() => onEdit((s) => clearSpan(s, ci, si))}
+                      >
+                        Clear
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : null}
+          </div>
+        ))}
       </section>
 
       <section className="sidebar__section">
@@ -301,21 +312,8 @@ const setConstant = (key: keyof PhysicsConstants, value: number) =>
           onClick={() => setAdvancedOpen((open) => !open)}
         >
           <span>Advanced constants</span>
-          <svg
-            className="advanced-toggle__chevron"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="m6 9 6 6 6-6"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
+          <svg className="advanced-toggle__chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
 
@@ -357,26 +355,13 @@ const setConstant = (key: keyof PhysicsConstants, value: number) =>
           <>
             <div className="progress-row">
               <span className="progress-percent">{percent}%</span>
-              <span className="progress-steps">
-                {iteration.toLocaleString()} steps
-              </span>
+              <span className="progress-steps">{iteration.toLocaleString()} steps</span>
             </div>
-            <div
-              className="bar"
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={percent}
-              aria-label="Solver progress"
-            >
+            <div className="bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-label="Solver progress">
               <div className="bar__fill" style={{ width: `${percent}%` }} />
             </div>
             <span className="progress-ke">kinetic energy · {formatEnergy(ke)}</span>
-            <button
-              type="button"
-              className="btn btn--danger btn--block"
-              onClick={onCancel}
-            >
+            <button type="button" className="btn btn--danger btn--block" onClick={onCancel}>
               Cancel
             </button>
           </>
@@ -397,13 +382,10 @@ const setConstant = (key: keyof PhysicsConstants, value: number) =>
                 <CheckIcon />
                 <div className="notice__body">
                   <span className="notice__title">
-                    {termination === 'ke'
-                      ? 'Converged — KE threshold reached'
-                      : 'Stopped — max iterations reached'}
+                    {termination === 'ke' ? 'Converged — KE threshold reached' : 'Stopped — max iterations reached'}
                   </span>
                   <span className="notice__meta">
-                    {resultIterations.toLocaleString()} iterations · final KE{' '}
-                    {formatEnergy(ke)}
+                    {resultIterations.toLocaleString()} iterations · final KE {formatEnergy(ke)}
                   </span>
                 </div>
               </div>
@@ -429,11 +411,9 @@ const setConstant = (key: keyof PhysicsConstants, value: number) =>
               type="button"
               className="btn btn--primary btn--lg btn--block"
               disabled={!canCompute}
-              onClick={() => onCompute(input, constants)}
+              onClick={() => onCompute(setup, constants)}
             >
-              {status === 'done' || status === 'error' || status === 'cancelled'
-                ? 'Compute again'
-                : 'Compute'}
+              {status === 'done' || status === 'error' || status === 'cancelled' ? 'Compute again' : 'Compute'}
             </button>
           </>
         )}

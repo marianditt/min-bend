@@ -1,8 +1,8 @@
-import { EPS_STABILIZE, type ProblemInput } from './types'
+import { EPS_STABILIZE, type Setup } from './types'
 
 /** A single, field-targeted validation problem. */
 export interface ValidationIssue {
-  field: 'n' | 'start' | 'end' | 'startDir' | 'endDir' | 'general'
+  field: string
   message: string
 }
 
@@ -15,59 +15,78 @@ function isFiniteVec(v: unknown): v is [number, number] {
   )
 }
 
+function isNonZeroVec(v: [number, number]): boolean {
+  return Math.hypot(v[0], v[1]) > EPS_STABILIZE
+}
+
 /**
- * Validate a problem definition. Returns an empty array when the input is
+ * Validate a multi-curve setup. Returns an empty array when the setup is
  * solvable. Rules (fixed stabilization threshold EPS_STABILIZE = 1e-3):
- *  - n is an integer >= 2
- *  - all coordinates are finite
- *  - start/end orientations are non-zero vectors
- *  - drawnPts entries (when present) are finite [x,y] pairs
+ *  - at least one curve
+ *  - each curve has at least 2 fix points
+ *  - each curve's `n` is an integer >= 0
+ *  - all fix point positions are finite
+ *  - orientations, when present, are finite non-zero vectors
+ *  - all user free points are finite [x, y] pairs
  */
-export function validateInput(input: ProblemInput): ValidationIssue[] {
+export function validateSetup(setup: Setup): ValidationIssue[] {
   const issues: ValidationIssue[] = []
-  const { n, start, end, startDir, endDir, drawnPts } = input
+  const curves = setup?.curves
 
-  if (!Number.isInteger(n) || n < 2) {
-    issues.push({ field: 'n', message: 'Number of points must be an integer ≥ 2.' })
-  }
-
-  if (!isFiniteVec(start)) {
-    issues.push({ field: 'start', message: 'Start point must be two finite numbers.' })
-  }
-  if (!isFiniteVec(end)) {
-    issues.push({ field: 'end', message: 'End point must be two finite numbers.' })
-  }
-  if (!isFiniteVec(startDir)) {
-    issues.push({ field: 'startDir', message: 'Start orientation must be two finite numbers.' })
-  }
-  if (!isFiniteVec(endDir)) {
-    issues.push({ field: 'endDir', message: 'End orientation must be two finite numbers.' })
+  if (!Array.isArray(curves) || curves.length === 0) {
+    issues.push({ field: 'curves', message: 'Add at least one curve.' })
+    return issues
   }
 
-  if (isFiniteVec(startDir) && Math.hypot(startDir[0], startDir[1]) <= EPS_STABILIZE) {
-    issues.push({
-      field: 'startDir',
-      message: `Start orientation must be a non-zero vector (length > ${EPS_STABILIZE}).`,
-    })
-  }
-  if (isFiniteVec(endDir) && Math.hypot(endDir[0], endDir[1]) <= EPS_STABILIZE) {
-    issues.push({
-      field: 'endDir',
-      message: `End orientation must be a non-zero vector (length > ${EPS_STABILIZE}).`,
-    })
-  }
+  curves.forEach((curve, ci) => {
+    const label = `Curve ${ci + 1}`
 
-  // Validate drawnPts entries when present
-  if (Array.isArray(drawnPts)) {
-    for (let i = 0; i < drawnPts.length; i++) {
-      if (!isFiniteVec(drawnPts[i])) {
+    if (!Number.isInteger(curve.n) || curve.n < 0) {
+      issues.push({ field: `n:${ci}`, message: `${label}: interior points must be an integer ≥ 0.` })
+    }
+
+    if (!Array.isArray(curve.fixPoints) || curve.fixPoints.length < 2) {
+      issues.push({ field: `fixPoints:${ci}`, message: `${label}: needs at least 2 fix points.` })
+      return
+    }
+
+    curve.fixPoints.forEach((fp, pi) => {
+      if (!isFiniteVec(fp.pos)) {
         issues.push({
-          field: 'general',
-          message: `Drawn point ${i} must be a finite [x, y] pair.`,
+          field: `fixPoint:${ci}:${pi}`,
+          message: `${label}, fix point ${pi + 1}: position must be two finite numbers.`,
         })
       }
+      const orient = fp.orientation
+      if (orient !== null && orient !== undefined) {
+        if (!isFiniteVec(orient)) {
+          issues.push({
+            field: `orientation:${ci}:${pi}`,
+            message: `${label}, fix point ${pi + 1}: orientation must be two finite numbers.`,
+          })
+        } else if (!isNonZeroVec(orient)) {
+          issues.push({
+            field: `orientation:${ci}:${pi}`,
+            message: `${label}, fix point ${pi + 1}: orientation must be a non-zero vector (length > ${EPS_STABILIZE}).`,
+          })
+        }
+      }
+    })
+
+    if (Array.isArray(curve.spans)) {
+      curve.spans.forEach((spanFree, si) => {
+        if (!Array.isArray(spanFree)) return
+        spanFree.forEach((p, fi) => {
+          if (!isFiniteVec(p)) {
+            issues.push({
+              field: `free:${ci}:${si}:${fi}`,
+              message: `${label}, span ${si + 1}: free point ${fi + 1} must be a finite [x, y] pair.`,
+            })
+          }
+        })
+      })
     }
-  }
+  })
 
   return issues
 }

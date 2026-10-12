@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WorkerRequest, WorkerResponse } from '../solver/protocol'
-import type { FrameSet, PhysicsConstants, ProblemInput } from '../solver/types'
+import type { FrameSet, PhysicsConstants, Setup } from '../solver/types'
 
 export type SolverStatus = 'idle' | 'running' | 'done' | 'cancelled' | 'error'
 
@@ -19,7 +19,7 @@ export interface SolverState {
 }
 
 export interface SolverController {
-  compute: (input: ProblemInput, constants: PhysicsConstants) => void
+  compute: (input: Setup, constants: PhysicsConstants) => void
   cancel: () => void
   state: SolverState
 }
@@ -94,7 +94,7 @@ export function useSolver(): SolverController {
   }, [clearCancelTimer, teardown])
 
   const compute = useCallback(
-    (input: ProblemInput, constants: PhysicsConstants) => {
+    (input: Setup, constants: PhysicsConstants) => {
       clearCancelTimer()
       teardown()
 

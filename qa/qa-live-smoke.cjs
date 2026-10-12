@@ -21,18 +21,18 @@ const LIVE_URL = process.env.QA_LIVE_URL || 'https://marianditt.github.io/min-be
   const browser = await firefox.launch({ headless: true })
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   const errs = []
-  page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()) })
+  page.on('console', (m) => {
+    if (m.type() === 'error') errs.push(m.text())
+  })
   page.on('pageerror', (e) => errs.push(String(e)))
   try {
     const resp = await page.goto(LIVE_URL, { waitUntil: 'load', timeout: 45000 })
     console.log('http status:', resp.status())
     await page.waitForSelector('h1.app__title', { timeout: 15000 })
     console.log('title:', (await page.textContent('h1.app__title')).trim())
+    console.log('editor visible:', await page.isVisible('.pose-editor'))
 
-    const vecInput = (g, a) => page.locator('.group', { hasText: g }).locator('.field', { hasText: a }).locator('input').first()
-    console.log('end X/Y:', await vecInput('End point', 'X').inputValue(), '/', await vecInput('End point', 'Y').inputValue())
-
-    await page.locator('button:has-text("Compute")').first().click()
+    await page.locator('.sidebar__actions button.btn--primary').click()
     await page.waitForSelector('.notice--success', { timeout: 90000 })
     const txt = (await page.textContent('.notice--success')).trim()
     console.log('notice:', txt)

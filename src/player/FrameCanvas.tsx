@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { FrameSet } from '../solver/types'
+import type { Curve, FrameSet } from '../solver/types'
 import { boundsForScale, fitScale, nextDisplayedScale, type Bounds, type EasePhase } from './scaleEase'
-import { type Theme, LIGHT_THEME, DARK_THEME, computePtsBounds, makeProjector, drawGrid, drawAxes, drawArrow, usePrefersDark } from './canvasKit'
+import {
+  type Theme,
+  LIGHT_THEME,
+  DARK_THEME,
+  computePtsBounds,
+  makeProjector,
+  drawGrid,
+  drawAxes,
+  drawArrow,
+  curveColor,
+  usePrefersDark,
+} from './canvasKit'
 
 export interface FrameCanvasProps {
   frameSet: FrameSet
@@ -9,9 +20,25 @@ export interface FrameCanvasProps {
   playing: boolean
 }
 
+const EMPTY_CURVE: Curve = { fixPoints: [], n: 0, spans: [] }
 
+function fixIndices(curve: Curve): number[] {
+  const n = Math.max(0, Math.floor(curve.n))
+  const indices: number[] = []
+  for (let i = 0; i < curve.fixPoints.length; i += 1) indices.push(i * (n + 1))
+  return indices
+}
 
-function draw(frameSet: FrameSet, frameIndex: number, ctx: CanvasRenderingContext2D, width: number, height: number, bounds: Bounds, theme: Theme) {
+function draw(
+  frameSet: FrameSet,
+  frameIndex: number,
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  bounds: Bounds,
+  theme: Theme,
+  dark: boolean,
+) {
   ctx.fillStyle = theme.bg
   ctx.fillRect(0, 0, width, height)
 
@@ -22,76 +49,69 @@ function draw(frameSet: FrameSet, frameIndex: number, ctx: CanvasRenderingContex
   const { frames } = frameSet
   if (frames.length === 0) return
   const index = Math.min(Math.max(frameIndex, 0), frames.length - 1)
-  const pts = frames[index].pts
-  if (pts.length === 0) return
+  const curves = frames[index].curves
+  const inputCurves = frameSet.meta.input?.curves ?? []
 
-  const screen: [number, number][] = pts.map(([x, y]) => [project.toX(x), project.toY(y)])
+  curves.forEach((pts, ci) => {
+    if (!pts || pts.length === 0) return
+    const color = curveColor(ci, dark)
+    const screen: [number, number][] = pts.map(([x, y]) => [project.toX(x), project.toY(y)])
+    const curve = inputCurves[ci] ?? EMPTY_CURVE
+    const fix = fixIndices(curve)
+    const fixSet = new Set(fix)
 
-  // Chain polyline.
-  if (screen.length >= 2) {
-    ctx.strokeStyle = theme.chain
-    ctx.lineWidth = 2.4
-    ctx.lineJoin = 'round'
-    ctx.lineCap = 'round'
-    ctx.beginPath()
-    ctx.moveTo(screen[0][0], screen[0][1])
-    for (let i = 1; i < screen.length; i += 1) {
-      ctx.lineTo(screen[i][0], screen[i][1])
+    if (screen.length >= 2) {
+      ctx.strokeStyle = color
+      ctx.lineWidth = 2.4
+      ctx.lineJoin = 'round'
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.moveTo(screen[0][0], screen[0][1])
+      for (let i = 1; i < screen.length; i += 1) ctx.lineTo(screen[i][0], screen[i][1])
+      ctx.stroke()
     }
-    ctx.stroke()
-  }
 
-  // Interior point markers.
-  const last = screen.length - 1
-  ctx.fillStyle = theme.point
-  ctx.strokeStyle = theme.pointRing
-  ctx.lineWidth = 1.4
-  for (let i = 1; i < last; i += 1) {
-    ctx.beginPath()
-    ctx.arc(screen[i][0], screen[i][1], 3.4, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.stroke()
-  }
-
-  // Orientation constraint arrows, from the first/last segment of frame 0.
-  const first = screen[0]
-  const second = screen[1]
-  if (second) {
-    const dx = second[0] - first[0]
-    const dy = second[1] - first[1]
-    const len = Math.hypot(dx, dy)
-    if (len > 1e-6) {
-      const shaft = Math.min(34, len * 0.85)
-      drawArrow(ctx, first[0], first[1], first[0] + (dx / len) * shaft, first[1] + (dy / len) * shaft, theme.orient)
-    }
-  }
-  const lastPt = screen[last]
-  const prevPt = screen[last - 1]
-  if (lastPt && prevPt) {
-    const dx = lastPt[0] - prevPt[0]
-    const dy = lastPt[1] - prevPt[1]
-    const len = Math.hypot(dx, dy)
-    if (len > 1e-6) {
-      const shaft = Math.min(34, len * 0.85)
-      drawArrow(ctx, lastPt[0], lastPt[1], lastPt[0] + (dx / len) * shaft, lastPt[1] + (dy / len) * shaft, theme.orient)
-    }
-  }
-
-  // Fixed endpoints: larger squares, drawn last so they stay legible.
-  const drawEndpoint = (p: [number, number], color: string) => {
-    const size = 12
     ctx.fillStyle = color
     ctx.strokeStyle = theme.pointRing
-    ctx.lineWidth = 2
-    const x = p[0] - size / 2
-    const y = p[1] - size / 2
-    ctx.beginPath()
-    ctx.rect(x, y, size, size)
-    ctx.fill()
-    ctx.stroke()
-  }
-  if (lastPt) drawEndpoint(lastPt, theme.end)
-  drawEndpoint(first, theme.start)
+    ctx.lineWidth = 1.4
+    for (let i = 1; i < screen.length - 1; i += 1) {
+      if (fixSet.has(i)) continue
+      ctx.beginPath()
+      ctx.arc(screen[i][0], screen[i][1], 3.4, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+    }
+
+    curve.fixPoints.forEach((fp, pi) => {
+      if (!fp.orientation) return
+      const p = screen[fix[pi]]
+      if (!p) return
+      const len = Math.hypot(fp.orientation[0], fp.orientation[1])
+      if (len < 1e-9) return
+      const ux = fp.orientation[0] / len
+      const uy = fp.orientation[1] / len
+      drawArrow(ctx, p[0], p[1], p[0] + ux * 30, p[1] - uy * 30, theme.orient)
+    })
+
+    const drawEndpoint = (p: [number, number], endpointColor: string) => {
+      const size = 12
+      ctx.fillStyle = endpointColor
+      ctx.strokeStyle = theme.pointRing
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.rect(p[0] - size / 2, p[1] - size / 2, size, size)
+      ctx.fill()
+      ctx.stroke()
+    }
+    const lastPi = curve.fixPoints.length - 1
+    curve.fixPoints.forEach((_, pi) => {
+      const p = screen[fix[pi]]
+      if (!p) return
+      if (pi === 0) drawEndpoint(p, theme.start)
+      else if (pi === lastPi) drawEndpoint(p, theme.end)
+      else drawEndpoint(p, theme.orient)
+    })
+  })
 }
 
 export function FrameCanvas({ frameSet, frameIndex, playing }: FrameCanvasProps) {
@@ -104,8 +124,8 @@ export function FrameCanvas({ frameSet, frameIndex, playing }: FrameCanvasProps)
   const phaseRef = useRef<EasePhase | null>(null)
 
   const clampedIndex = Math.min(Math.max(frameIndex, 0), Math.max(frameSet.frames.length - 1, 0))
-  const framePts = frameSet.frames[clampedIndex]?.pts
-  const bounds = useMemo(() => computePtsBounds(framePts ?? []), [framePts])
+  const frameCurves = frameSet.frames[clampedIndex]?.curves
+  const bounds = useMemo(() => computePtsBounds((frameCurves ?? []).flat()), [frameCurves])
   const theme = dark ? DARK_THEME : LIGHT_THEME
 
   useEffect(() => {
@@ -143,9 +163,9 @@ export function FrameCanvas({ frameSet, frameIndex, playing }: FrameCanvasProps)
     displayedScaleRef.current = result.scale
     phaseRef.current = result.phase
     const drawBounds = result.scale === target ? bounds : boundsForScale(bounds, target, result.scale)
-    draw(frameSet, frameIndex, ctx, size.width, size.height, drawBounds, theme)
+    draw(frameSet, frameIndex, ctx, size.width, size.height, drawBounds, theme, dark)
     canvas.dataset.scale = String(result.scale)
-  }, [frameSet, frameIndex, size, bounds, theme, playing, clampedIndex])
+  }, [frameSet, frameIndex, size, bounds, theme, playing, clampedIndex, dark])
 
   return (
     <div className="frame-canvas" ref={containerRef}>

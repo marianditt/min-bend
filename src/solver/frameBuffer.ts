@@ -5,7 +5,7 @@ import type { Frame } from './types'
  * more are decimated in place, keeping the first and last frames and an
  * approximately even spacing across the whole run.
  */
-export const MAX_STORED_FRAMES = 100000
+export const MAX_STORED_FRAMES = 20000
 
 export interface FrameBuffer {
   /**

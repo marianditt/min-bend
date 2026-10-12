@@ -40,6 +40,14 @@ export const DARK_THEME: Theme = {
   orient: '#fbbf24',
 }
 
+const LIGHT_CURVES = ['#3563e9', '#128a43', '#cf2e2e', '#b45309', '#7c3aed', '#0891b2']
+const DARK_CURVES = ['#7aa2ff', '#4ade80', '#f87272', '#fbbf24', '#c084fc', '#22d3ee']
+
+export function curveColor(index: number, dark: boolean): string {
+  const palette = dark ? DARK_CURVES : LIGHT_CURVES
+  return palette[index % palette.length]
+}
+
 export function computePtsBounds(pts: Vec2[]): Bounds {
   let minX = Infinity
   let minY = Infinity

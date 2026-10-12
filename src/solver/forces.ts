@@ -182,40 +182,82 @@ export function computeAcceleration(
   return accel
 }
 
-/** Enforce orientation constraints on first and last free points. */
+/**
+ * Pin the single interior point of an n = 1 span that is bound at both ends to
+ * the intersection of the two tangent rays (a + t·d0 and b − s·d1, t, s ≥ 0).
+ * When the rays are parallel or the intersection falls behind either ray, fall
+ * back to the span midpoint projected onto the start ray.
+ */
+function pinToRayIntersection(pts: Vec2[], vel: Vec2[], d0: Vec2, d1: Vec2): void {
+  const a = pts[0]
+  const b = pts[pts.length - 1]
+  const det = d0[0] * d1[1] - d0[1] * d1[0]
+
+  let pinned: Vec2 | null = null
+  if (Math.abs(det) >= EPS_STABILIZE) {
+    const cx = b[0] - a[0]
+    const cy = b[1] - a[1]
+    const t = (cx * d1[1] - cy * d1[0]) / det
+    const s = (d0[0] * cy - d0[1] * cx) / det
+    if (t >= 0 && s >= 0) pinned = add(a, scale(d0, t))
+  }
+
+  if (pinned === null) {
+    const mid: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
+    const rel = sub(mid, a)
+    const proj = dot(rel, d0)
+    pinned = add(a, scale(d0, proj > 0 ? proj : 0))
+  }
+
+  pts[1] = pinned
+  vel[1] = [0, 0]
+}
+
+/**
+ * Enforce orientation constraints on the first and/or last free point of a span.
+ * Either direction may be null (that end is unconstrained). When the span has a
+ * single interior point bound at both ends, the point is pinned to the tangent
+ * ray intersection instead of the usual independent projections.
+ */
 export function enforceOrientationConstraints(
   pts: Vec2[],
   vel: Vec2[],
-  startDir: Vec2,
-  endDir: Vec2,
+  startDir: Vec2 | null,
+  endDir: Vec2 | null,
 ): void {
   const N = pts.length
+  if (N <= 2) return
 
-  // First segment: d0 = normalize(startDir)
-  const d0 = normalize(startDir)
-  // Project p_1 onto ray from p_0 along d0: p_1 = p_0 + max(((p_1 - p_0)·d0), 0) * d0
-  const p1Rel = sub(pts[1], pts[0])
-  const proj1 = dot(p1Rel, d0)
-  const clampedProj1 = proj1 > 0 ? proj1 : 0
-  pts[1] = add(pts[0], scale(d0, clampedProj1))
+  const d0raw = startDir ? normalize(startDir) : null
+  const d1raw = endDir ? normalize(endDir) : null
+  const d0 = d0raw && length(d0raw) >= EPS_STABILIZE ? d0raw : null
+  const d1 = d1raw && length(d1raw) >= EPS_STABILIZE ? d1raw : null
 
-  // Project velocity: v_1 = (v_1·d0) * d0
-  const v1Dot = dot(vel[1], d0)
-  vel[1] = scale(d0, v1Dot)
+  if (!d0 && !d1) return
 
-  // Last segment: d1 = normalize(endDir)
-  const d1 = normalize(endDir)
-  // m = N-2 (index of last free point)
-  const m = N - 2
-  // Project p_m onto ray: p_m = p_{N-1} - max(((p_{N-1} - p_m)·d1), 0) * d1
-  const pmRel = sub(pts[N - 1], pts[m])
-  const projM = dot(pmRel, d1)
-  const clampedProjM = projM > 0 ? projM : 0
-  pts[m] = sub(pts[N - 1], scale(d1, clampedProjM))
+  if (d0 && d1 && N === 3) {
+    pinToRayIntersection(pts, vel, d0, d1)
+    return
+  }
 
-  // Project velocity: v_m = (v_m·d1) * d1
-  const vmDot = dot(vel[m], d1)
-  vel[m] = scale(d1, vmDot)
+  if (d0) {
+    // Project p_1 onto ray from p_0 along d0: p_1 = p_0 + max(((p_1 - p_0)·d0), 0) * d0
+    const p1Rel = sub(pts[1], pts[0])
+    const proj1 = dot(p1Rel, d0)
+    pts[1] = add(pts[0], scale(d0, proj1 > 0 ? proj1 : 0))
+    // Project velocity: v_1 = (v_1·d0) * d0
+    vel[1] = scale(d0, dot(vel[1], d0))
+  }
+
+  if (d1) {
+    // m = N-2 (index of last free point)
+    const m = N - 2
+    const pmRel = sub(pts[N - 1], pts[m])
+    const projM = dot(pmRel, d1)
+    pts[m] = sub(pts[N - 1], scale(d1, projM > 0 ? projM : 0))
+    // Project velocity: v_m = (v_m·d1) * d1
+    vel[m] = scale(d1, dot(vel[m], d1))
+  }
 }
 
 /** Verify all positions, velocities, accelerations are finite. */
