@@ -315,6 +315,31 @@ function check(name, cond, extra = '') {
     check('Multi: player curve selector has 2 chips', (await page.locator('.player .chip-row--view .chip').count()) === 2)
     await page.screenshot({ path: shot('qa-8-multicurve.png') })
 
+    // --- Hide a curve from the player (R2) ---
+    const viewChips = page.locator('.player .chip-row--view .curve-chip')
+    check('Hide: two curve chips in the player', (await viewChips.count()) === 2)
+    check('Hide: eye toggle on every chip', (await page.locator('.player .curve-chip__eye').count()) === 2)
+    const chip2 = viewChips.nth(1)
+    const eye2 = chip2.locator('.curve-chip__eye')
+    check('Hide: curve 2 starts shown', (await eye2.getAttribute('aria-pressed')) === 'false')
+    await eye2.click()
+    await page.waitForTimeout(120)
+    check('Hide: curve 2 chip marked hidden', ((await chip2.getAttribute('class')) || '').includes('is-hidden'))
+    check('Hide: curve 2 eye reports hidden', (await eye2.getAttribute('aria-pressed')) === 'true')
+    check(
+      'Hide: frame canvas still painted',
+      await page
+        .locator('.frame-canvas canvas')
+        .evaluate((c) => Number(c.dataset.scale) > 0)
+        .catch(() => false),
+    )
+    const storedHidden = await page.evaluate(() => {
+      const raw = localStorage.getItem('min-bend:state')
+      return raw ? JSON.parse(raw) : null
+    })
+    check('Hide: hidden flag persisted', storedHidden?.setup?.curves?.[1]?.hidden === true)
+    await page.screenshot({ path: shot('qa-9-hidden.png') })
+
     // --- Create a new curve from the solved frame (R3) ---
     const fromFrameBtn = page.locator('button:has-text("Curve from frame")')
     check('Create-from-frame: button present in player', (await fromFrameBtn.count()) === 1)
@@ -377,26 +402,17 @@ function check(name, cond, extra = '') {
     check('Cancel: Compute re-enabled', await computeBtn.isEnabled())
     await page.screenshot({ path: shot('qa-5-cancelled.png') })
 
-    // --- Hide curves (R2) + persistence across reload (R4) ---
-    const firstCard = page.locator('.curve-card').first()
-    check('Hide: eye toggle present', (await firstCard.locator('.curve-card__eye').count()) === 1)
-    await firstCard.locator('.curve-card__eye').click()
-    await page.waitForTimeout(150)
-    check('Hide: card marked hidden', ((await firstCard.getAttribute('class')) || '').includes('is-hidden'))
-    await page.screenshot({ path: shot('qa-10-hidden.png') })
-
-    const curveCountBeforeReload = await page.locator('.curve-card').count()
+    // --- Persistence across reload (R4) ---
+    const storedBeforeReload = await page.evaluate(() => {
+      const raw = localStorage.getItem('min-bend:state')
+      return raw ? JSON.parse(raw) : null
+    })
+    const storedCurves = storedBeforeReload?.setup?.curves ?? []
+    check('Persistence: three curves stored', storedCurves.length === 3, `n=${storedCurves.length}`)
+    check('Persistence: hidden flag stored', storedCurves[1]?.hidden === true)
     await page.reload({ waitUntil: 'load' })
     await page.waitForSelector('.pose-editor')
-    check(
-      'Persistence: curve count restored',
-      (await page.locator('.curve-card').count()) === curveCountBeforeReload,
-      `n=${curveCountBeforeReload}`,
-    )
-    check(
-      'Persistence: hidden flag restored',
-      ((await page.locator('.curve-card').first().getAttribute('class')) || '').includes('is-hidden'),
-    )
+    check('Persistence: curve count restored', (await page.locator('.curve-card').count()) === 3)
     await page.locator('button:has-text("Advanced constants")').click()
     check(
       'Persistence: constants restored',
@@ -409,6 +425,14 @@ function check(name, cond, extra = '') {
     await page.waitForTimeout(150)
     check('Reset: back to a single default curve', (await page.locator('.curve-card').count()) === 1)
     check('Reset: default n = 6', (await fieldInput('Interior points per span').inputValue()) === '6')
+    const storedAfterReset = await page.evaluate(() => {
+      const raw = localStorage.getItem('min-bend:state')
+      return raw ? JSON.parse(raw) : null
+    })
+    check(
+      'Reset: hidden flags cleared in storage',
+      !(storedAfterReset?.setup?.curves ?? []).some((c) => c.hidden),
+    )
     await page.reload({ waitUntil: 'load' })
     await page.waitForSelector('.pose-editor')
     check('Reset: defaults persist after reload', (await page.locator('.curve-card').count()) === 1)

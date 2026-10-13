@@ -9,6 +9,8 @@ import './player.css'
 
 export interface PlayerProps {
   frameSet: FrameSet
+  hidden: boolean[]
+  onToggleHidden?: (curveIndex: number) => void
   onCreateFromFrame?: (poly: Vec2[], source: Curve) => void
 }
 
@@ -78,11 +80,26 @@ function SplitIcon() {
   )
 }
 
+function EyeIcon({ off }: { off: boolean }) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7" />
+      {off ? <path d="M4 20 20 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" /> : null}
+    </svg>
+  )
+}
+
 /**
  * Playback widget for a {@link FrameSet}. Remounted per compute run by the
  * parent (via a `key`), so each run starts cleanly at frame 0.
  */
-export function Player({ frameSet, onCreateFromFrame }: PlayerProps) {
+export function Player({ frameSet, hidden, onToggleHidden, onCreateFromFrame }: PlayerProps) {
   const total = frameSet.frames.length
   const lastIndex = Math.max(0, total - 1)
 
@@ -203,14 +220,11 @@ export function Player({ frameSet, onCreateFromFrame }: PlayerProps) {
 
   const curveMeta = frameSet.meta.input?.curves
   const curveCount = Math.max(frameSet.meta.curveCount, 1)
-  const visibleIndices = useMemo(
-    () =>
-      curveMeta
-        ? curveMeta.map((_, ci) => ci).filter((ci) => !curveMeta[ci].hidden)
-        : Array.from({ length: curveCount }, (_, ci) => ci),
-    [curveMeta, curveCount],
+  const curveIndices = useMemo(
+    () => Array.from({ length: curveCount }, (_, ci) => ci),
+    [curveCount],
   )
-  const safeCurve = visibleIndices.includes(curveIndex) ? curveIndex : (visibleIndices[0] ?? 0)
+  const safeCurve = Math.min(Math.max(curveIndex, 0), curveCount - 1)
 
   const legend = useMemo(
     () => [
@@ -236,7 +250,7 @@ export function Player({ frameSet, onCreateFromFrame }: PlayerProps) {
 
         <div className="player__hud">
           <span>
-            {visibleIndices.length} curve{visibleIndices.length === 1 ? '' : 's'}
+            {curveCount} curve{curveCount === 1 ? '' : 's'}
           </span>
           <span>{frameSet.meta.N} pts</span>
           <span>KE {formatEnergy(ke)}</span>
@@ -244,19 +258,35 @@ export function Player({ frameSet, onCreateFromFrame }: PlayerProps) {
       </div>
 
       <div className="player__viewbar">
-        {visibleIndices.length > 1 ? (
+        {curveCount > 1 ? (
           <div className="chip-row chip-row--view" role="tablist" aria-label="Curve to plot">
-            {visibleIndices.map((ci) => (
-              <button
+            {curveIndices.map((ci) => (
+              <span
                 key={ci}
-                type="button"
-                role="tab"
-                aria-selected={ci === safeCurve}
-                className={`chip chip--sm ${ci === safeCurve ? 'is-active' : ''}`}
-                onClick={() => setCurveIndex(ci)}
+                className={`chip chip--sm curve-chip ${ci === safeCurve ? 'is-active' : ''} ${hidden[ci] ? 'is-hidden' : ''}`}
               >
-                Curve {ci + 1}
-              </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={ci === safeCurve}
+                  className="curve-chip__name"
+                  onClick={() => setCurveIndex(ci)}
+                >
+                  Curve {ci + 1}
+                </button>
+                {onToggleHidden ? (
+                  <button
+                    type="button"
+                    className="curve-chip__eye"
+                    aria-pressed={!!hidden[ci]}
+                    aria-label={hidden[ci] ? `Show curve ${ci + 1}` : `Hide curve ${ci + 1}`}
+                    title={hidden[ci] ? 'Show this curve in the view' : 'Hide this curve from the view'}
+                    onClick={() => onToggleHidden(ci)}
+                  >
+                    <EyeIcon off={!!hidden[ci]} />
+                  </button>
+                ) : null}
+              </span>
             ))}
           </div>
         ) : null}
@@ -292,11 +322,11 @@ export function Player({ frameSet, onCreateFromFrame }: PlayerProps) {
       <div className="player__stage">
         {split ? (
           <div className="player__split">
-            <CoordinatePlot frameSet={frameSet} frameIndex={safeIndex} axis={0} />
-            <CoordinatePlot frameSet={frameSet} frameIndex={safeIndex} axis={1} />
+            <CoordinatePlot frameSet={frameSet} frameIndex={safeIndex} axis={0} hidden={hidden} />
+            <CoordinatePlot frameSet={frameSet} frameIndex={safeIndex} axis={1} hidden={hidden} />
           </div>
         ) : (
-          <FrameCanvas frameSet={frameSet} frameIndex={safeIndex} playing={playing} />
+          <FrameCanvas frameSet={frameSet} frameIndex={safeIndex} playing={playing} hidden={hidden} />
         )}
       </div>
 

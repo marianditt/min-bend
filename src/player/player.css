@@ -318,3 +318,42 @@
 .player__viewbar > .btn:last-child {
   margin-left: auto;
 }
+
+.curve-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.curve-chip.is-hidden {
+  opacity: 0.5;
+}
+
+.curve-chip__name {
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px 4px 3px 9px;
+}
+
+.curve-chip__eye {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px 7px 3px 3px;
+  opacity: 0.7;
+}
+
+.curve-chip__eye:hover {
+  opacity: 1;
+}

@@ -19,6 +19,7 @@ export interface FrameCanvasProps {
   frameSet: FrameSet
   frameIndex: number
   playing: boolean
+  hidden: boolean[]
 }
 
 const EMPTY_CURVE: Curve = { fixPoints: [], n: 0, spans: [] }
@@ -32,6 +33,7 @@ function draw(
   bounds: Bounds,
   theme: Theme,
   dark: boolean,
+  hidden: boolean[],
 ) {
   ctx.fillStyle = theme.bg
   ctx.fillRect(0, 0, width, height)
@@ -48,7 +50,7 @@ function draw(
 
   curves.forEach((pts, ci) => {
     if (!pts || pts.length === 0) return
-    if (inputCurves[ci]?.hidden) return
+    if (hidden[ci]) return
     const color = curveColor(ci, dark)
     const screen: [number, number][] = pts.map(([x, y]) => [project.toX(x), project.toY(y)])
     const curve = inputCurves[ci] ?? EMPTY_CURVE
@@ -109,7 +111,7 @@ function draw(
   })
 }
 
-export function FrameCanvas({ frameSet, frameIndex, playing }: FrameCanvasProps) {
+export function FrameCanvas({ frameSet, frameIndex, playing, hidden }: FrameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -120,12 +122,11 @@ export function FrameCanvas({ frameSet, frameIndex, playing }: FrameCanvasProps)
 
   const clampedIndex = Math.min(Math.max(frameIndex, 0), Math.max(frameSet.frames.length - 1, 0))
   const frameCurves = frameSet.frames[clampedIndex]?.curves
-  const inputCurves = frameSet.meta.input?.curves
   const bounds = useMemo(() => {
     const curves = frameCurves ?? []
-    const visible = inputCurves ? curves.filter((_, ci) => !inputCurves[ci]?.hidden) : curves
+    const visible = curves.filter((_, ci) => !hidden[ci])
     return computePtsBounds(visible.flat())
-  }, [frameCurves, inputCurves])
+  }, [frameCurves, hidden])
   const theme = dark ? DARK_THEME : LIGHT_THEME
 
   useEffect(() => {
@@ -163,9 +164,9 @@ export function FrameCanvas({ frameSet, frameIndex, playing }: FrameCanvasProps)
     displayedScaleRef.current = result.scale
     phaseRef.current = result.phase
     const drawBounds = result.scale === target ? bounds : boundsForScale(bounds, target, result.scale)
-    draw(frameSet, frameIndex, ctx, size.width, size.height, drawBounds, theme, dark)
+    draw(frameSet, frameIndex, ctx, size.width, size.height, drawBounds, theme, dark, hidden)
     canvas.dataset.scale = String(result.scale)
-  }, [frameSet, frameIndex, size, bounds, theme, playing, clampedIndex, dark])
+  }, [frameSet, frameIndex, size, bounds, theme, playing, clampedIndex, dark, hidden])
 
   return (
     <div className="frame-canvas" ref={containerRef}>

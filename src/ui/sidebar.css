@@ -276,16 +276,6 @@
   background: var(--bg);
 }
 
-.curve-card.is-hidden {
-  opacity: 0.55;
-}
-
-.curve-card__eye {
-  flex: none;
-  padding: 0;
-  min-width: 34px;
-}
-
 .curve-card__head {
   display: flex;
   align-items: center;

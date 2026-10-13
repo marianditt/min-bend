@@ -1,10 +1,10 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useSolver } from './hooks/useSolver'
 import { useSetupState } from './hooks/useSetupState'
 import { Player } from './player/Player'
 import { Sidebar } from './ui/Sidebar'
 import { PoseEditor } from './ui/PoseEditor'
-import { appendBakedCurve } from './ui/setupEdits'
+import { appendBakedCurve, toggleCurveHidden } from './ui/setupEdits'
 import type { Curve, PhysicsConstants, Setup, Vec2 } from './solver/types'
 import { formatEnergy } from './lib/format'
 
@@ -72,6 +72,12 @@ function App() {
     [setup],
   )
 
+  const hidden = useMemo(() => setup.setup.curves.map((curve) => !!curve.hidden), [setup.setup])
+  const handleToggleHidden = useCallback(
+    (ci: number) => setup.update((s) => toggleCurveHidden(s, ci)),
+    [setup],
+  )
+
   const resultIterations = result ? (result.meta.iterations ?? result.frames.length) : null
   const termination = result ? result.meta.termination : null
 
@@ -126,6 +132,8 @@ function App() {
               <Player
                 key={playerKey}
                 frameSet={result as NonNullable<typeof result>}
+                hidden={hidden}
+                onToggleHidden={handleToggleHidden}
                 onCreateFromFrame={handleCreateFromFrame}
               />
             </div>

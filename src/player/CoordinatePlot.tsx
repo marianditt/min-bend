@@ -7,6 +7,7 @@ export interface CoordinatePlotProps {
   frameSet: FrameSet
   frameIndex: number
   axis: 0 | 1
+  hidden: boolean[]
 }
 
 interface PlotTheme {
@@ -118,16 +119,12 @@ function draw(
   })
 }
 
-export function CoordinatePlot({ frameSet, frameIndex, axis }: CoordinatePlotProps) {
+export function CoordinatePlot({ frameSet, frameIndex, axis, hidden }: CoordinatePlotProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const dark = usePrefersDark()
   const theme = dark ? DARK_THEME : LIGHT_THEME
-  const hidden = useMemo(
-    () => (frameSet.meta.input?.curves ?? []).map((c) => !!c.hidden),
-    [frameSet],
-  )
   const range = useMemo(() => scanRange(frameSet.frames, axis, hidden), [frameSet, axis, hidden])
 
   useEffect(() => {
