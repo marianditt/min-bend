@@ -14,8 +14,11 @@ import { DEFAULT_CONSTANTS, type Curve, type FixPoint, type Frame, type Setup, t
 import { validateSetup } from './validate'
 import { MAX_RUNNING_PROGRESS, ProgressTracker } from './progress'
 
-const fp = (pos: Vec2, orientation: Vec2 | null = null, posFree = false): FixPoint =>
-  posFree ? { pos, orientation, posFree } : { pos, orientation }
+let nextId = 0
+const fp = (pos: Vec2, orientation: Vec2 | null = null, posFree = false): FixPoint => {
+  const id = `t${++nextId}`
+  return posFree ? { id, pos, orientation, posFree } : { id, pos, orientation }
+}
 
 /** Single curve through the given control points. */
 const chain = (points: FixPoint[], resolution = 1, extra: Partial<Curve> = {}): Setup => ({
@@ -473,16 +476,17 @@ describe('point constraints', () => {
   const base = (): Setup => ({
     resolution: 1,
     curves: [
-      { fixPoints: [{ pos: [0, 0], orientation: [1, 0] }, { pos: [4, 0], orientation: [0, 1] }], spans: [[]] },
-      { fixPoints: [{ pos: [9, 9], orientation: null, posFree: true }, { pos: [8, 3], orientation: null }], spans: [[]] },
+      { fixPoints: [fp([0, 0], [1, 0]), fp([4, 0], [0, 1])], spans: [[]] },
+      { fixPoints: [fp([9, 9], null, true), fp([8, 3])], spans: [[]] },
     ],
   })
+  const id = (s: Setup, curve: number, point: number) => s.curves[curve].fixPoints[point].id
 
   it('copies fixed position and orientation to the target', () => {
     const s = base()
     s.constraints = [
-      { kind: 'position', source: { curve: 0, point: 1 }, target: { curve: 1, point: 0 } },
-      { kind: 'orientation', source: { curve: 0, point: 1 }, target: { curve: 1, point: 0 } },
+      { kind: 'position', source: id(s, 0, 1), target: id(s, 1, 0) },
+      { kind: 'orientation', source: id(s, 0, 1), target: id(s, 1, 0) },
     ]
     const r = resolveSetup(s).setup.curves[1].fixPoints[0]
     expect(r.pos).toEqual([4, 0])
@@ -490,24 +494,86 @@ describe('point constraints', () => {
     expect(r.orientation).toEqual([0, 1])
   })
 
-  it('keeps free linked points together while solving', () => {
+  it('applies a position offset and an angle offset to a fixed source', () => {
     const s = base()
-    s.curves[0].fixPoints[1] = { pos: [4, 1], orientation: null, posFree: true }
-    s.constraints = [{ kind: 'position', source: { curve: 0, point: 1 }, target: { curve: 1, point: 0 } }]
+    s.constraints = [
+      { kind: 'position', source: id(s, 0, 1), target: id(s, 1, 0), delta: [1, -2] },
+      { kind: 'orientation', source: id(s, 0, 1), target: id(s, 1, 0), delta: 90 },
+    ]
+    const r = resolveSetup(s).setup.curves[1].fixPoints[0]
+    expect(r.pos).toEqual([5, -2])
+    expect(r.orientation![0]).toBeCloseTo(-1)
+    expect(r.orientation![1]).toBeCloseTo(0)
+  })
+
+  it('keeps free linked points together (at their offset) while solving', () => {
+    const s = base()
+    s.curves[0].fixPoints[1] = { ...fp([4, 1], null, true), id: id(s, 0, 1) }
+    s.constraints = [{ kind: 'position', source: id(s, 0, 1), target: id(s, 1, 0), delta: [0.5, 1] }]
     const fs = solve(s)
     const last = fs.frames[fs.frames.length - 1]
     const a = last.curves[0][last.controlIndices[0][1]]
     const b = last.curves[1][last.controlIndices[1][0]]
-    expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThan(1e-9)
+    expect(Math.hypot(b[0] - a[0] - 0.5, b[1] - a[1] - 1)).toBeLessThan(1e-9)
   })
 
   it('rejects loops and duplicate targets', () => {
     const s = base()
     s.constraints = [
-      { kind: 'position', source: { curve: 0, point: 1 }, target: { curve: 1, point: 0 } },
-      { kind: 'position', source: { curve: 1, point: 0 }, target: { curve: 0, point: 1 } },
+      { kind: 'position', source: id(s, 0, 1), target: id(s, 1, 0) },
+      { kind: 'position', source: id(s, 1, 0), target: id(s, 0, 1) },
     ]
     expect(validateSetup(s).length).toBeGreaterThan(0)
+  })
+
+  it('rejects a constraint whose point id does not exist', () => {
+    const s = base()
+    s.constraints = [{ kind: 'position', source: 'gone', target: id(s, 1, 0) }]
+    expect(validateSetup(s).length).toBeGreaterThan(0)
+  })
+
+  describe('following a free orientation', () => {
+    // A (curve 0, point 1) is free in position-fixed/orientation; B (curve 1, point 0) follows its tangent.
+    const follow = (delta: number): Setup => {
+      const s: Setup = {
+        resolution: 1,
+        curves: [
+          { fixPoints: [fp([0, 0], [1, 0]), fp([4, 0]), fp([8, 2], [0, 1])], spans: [[], []] },
+          { fixPoints: [fp([0, -6], [1, 0]), fp([4, -6]), fp([8, -4], [1, 1])], spans: [[], []] },
+        ],
+      }
+      s.constraints = [{ kind: 'orientation', source: id(s, 0, 1), target: id(s, 1, 1), delta }]
+      return s
+    }
+    const tangent = (pts: Vec2[], i: number): Vec2 => {
+      const a = [pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]]
+      const l = Math.hypot(a[0], a[1])
+      return [a[0] / l, a[1] / l]
+    }
+    const angle = (v: Vec2) => (Math.atan2(v[1], v[0]) * 180) / Math.PI
+
+    it.each([0, 30])('B keeps A\'s actual tangent rotated by %i degrees in the result', (delta) => {
+      const r = solve(follow(delta), { ...DEFAULT_CONSTANTS, maxIter: 20000 }, plainInit)
+      const f = r.frames.at(-1)!
+      const [ia, ib] = [f.controlIndices[0][1], f.controlIndices[1][1]]
+      const ta = angle(tangent(f.curves[0], ia))
+      const tb = angle(tangent(f.curves[1], ib))
+      expect(Math.abs(tb - ta - delta)).toBeLessThan(0.5)
+      // Both sides of B are collinear as well.
+      const out = f.curves[1][ib + 1]
+      const outAngle = angle([out[0] - f.curves[1][ib][0], out[1] - f.curves[1][ib][1]])
+      expect(Math.abs(outAngle - tb)).toBeLessThan(0.5)
+    })
+
+    it('the other curve pulls on the source: the shared tangent differs from the unlinked result', () => {
+      const linked = solve(follow(0), { ...DEFAULT_CONSTANTS, maxIter: 20000 }, plainInit).frames.at(-1)!
+      const alone = follow(0)
+      delete alone.constraints
+      const free = solve(alone, { ...DEFAULT_CONSTANTS, maxIter: 20000 }, plainInit).frames.at(-1)!
+      const a = angle(tangent(linked.curves[0], linked.controlIndices[0][1]))
+      const b = angle(tangent(free.curves[0], free.controlIndices[0][1]))
+      expect(Math.abs(a - b)).toBeGreaterThan(1)
+    })
   })
 })
 

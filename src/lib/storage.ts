@@ -5,13 +5,13 @@ import {
   type Curve,
   type FixPoint,
   type PhysicsConstants,
-  type PointRef,
   type Setup,
   type Vec2,
 } from '../solver/types'
+import { nextPointId } from '../solver/constraints'
 
 export const STORAGE_KEY = 'min-bend:state'
-export const STORAGE_VERSION = 2
+export const STORAGE_VERSION = 3
 
 export interface PersistedState {
   setup: Setup
@@ -30,6 +30,33 @@ const MIGRATIONS: Record<number, Migration> = {
   1: (state) => {
     const setup = isRecord(state.setup) ? state.setup : {}
     return { ...state, setup: { ...setup, resolution: DEFAULT_RESOLUTION } }
+  },
+  // v2 -> v3: control points got stable ids; constraints refer to ids, not indices.
+  2: (state) => {
+    const setup = isRecord(state.setup) ? state.setup : {}
+    const curves = Array.isArray(setup.curves) ? setup.curves : []
+    const idAt = new Map<string, string>()
+    let n = 0
+    const upgraded = curves.map((curve, ci) => {
+      if (!isRecord(curve) || !Array.isArray(curve.fixPoints)) return curve
+      return {
+        ...curve,
+        fixPoints: curve.fixPoints.map((fp, pi) => {
+          const id = `p${++n}`
+          idAt.set(`${ci}:${pi}`, id)
+          return isRecord(fp) ? { ...fp, id } : fp
+        }),
+      }
+    })
+    const constraints = Array.isArray(setup.constraints)
+      ? setup.constraints.flatMap((c) => {
+          if (!isRecord(c) || !isRecord(c.source) || !isRecord(c.target)) return []
+          const source = idAt.get(`${c.source.curve}:${c.source.point}`)
+          const target = idAt.get(`${c.target.curve}:${c.target.point}`)
+          return source && target ? [{ ...c, source, target }] : []
+        })
+      : []
+    return { ...state, setup: { ...setup, curves: upgraded, constraints } }
   },
 }
 
@@ -52,6 +79,7 @@ function sanitizeFixPoint(value: unknown): FixPoint | null {
   const orientation = value.orientation
   if (orientation !== null && orientation !== undefined && !isVec2(orientation)) return null
   const fp: FixPoint = {
+    id: typeof value.id === 'string' ? value.id : '',
     pos: [value.pos[0], value.pos[1]],
     orientation: orientation ? [orientation[0], orientation[1]] : null,
   }
@@ -97,14 +125,19 @@ function sanitizeSetup(value: unknown): Setup | null {
   }
   const resolution = isFiniteNumber(value.resolution) && value.resolution > 0 ? value.resolution : DEFAULT_RESOLUTION
   const setup: Setup = { curves, resolution }
+  const seen = new Set<string>()
+  for (const curve of curves) {
+    for (const fp of curve.fixPoints) {
+      if (fp.id && !seen.has(fp.id)) seen.add(fp.id)
+      else fp.id = ''
+    }
+  }
+  for (const curve of curves) {
+    for (const fp of curve.fixPoints) if (!fp.id) fp.id = nextPointId(setup)
+  }
   const constraints = sanitizeConstraints(value.constraints)
   if (constraints.length > 0) setup.constraints = constraints
   return setup
-}
-
-function sanitizeRef(value: unknown): PointRef | null {
-  if (!isRecord(value) || !Number.isInteger(value.curve) || !Number.isInteger(value.point)) return null
-  return { curve: value.curve as number, point: value.point as number }
 }
 
 function sanitizeConstraints(value: unknown): Constraint[] {
@@ -112,9 +145,13 @@ function sanitizeConstraints(value: unknown): Constraint[] {
   const out: Constraint[] = []
   for (const raw of value) {
     if (!isRecord(raw) || (raw.kind !== 'position' && raw.kind !== 'orientation')) continue
-    const source = sanitizeRef(raw.source)
-    const target = sanitizeRef(raw.target)
-    if (source && target) out.push({ kind: raw.kind, source, target })
+    if (typeof raw.source !== 'string' || typeof raw.target !== 'string') continue
+    const { source, target } = raw
+    if (raw.kind === 'position') {
+      out.push(isVec2(raw.delta) ? { kind: 'position', source, target, delta: [raw.delta[0], raw.delta[1]] } : { kind: 'position', source, target })
+    } else {
+      out.push(isFiniteNumber(raw.delta) ? { kind: 'orientation', source, target, delta: raw.delta } : { kind: 'orientation', source, target })
+    }
   }
   return out
 }

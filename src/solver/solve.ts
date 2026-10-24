@@ -1,5 +1,6 @@
 import type { Curve, Frame, FrameMeta, FrameSet, PhysicsConstants, Setup, Vec2 } from './types'
 import { DEFAULT_CONSTANTS } from './types'
+import { add, dot, length, normalize, scale, sub } from './forces'
 import { validateConstants, validateSetup } from './validate'
 import {
   type ChainModel,
@@ -12,7 +13,7 @@ import {
 import { createFrameBuffer } from './frameBuffer'
 import { planCurve, safeResolution, sampleAlong, unitOrNull } from './curve'
 import { equalizeSegments, remesh } from './remesh'
-import { resolveSetup } from './constraints'
+import { resolveSetup, type OrientationGroup } from './constraints'
 import { ProgressTracker } from './progress'
 
 /** Thrown by solve() when shouldCancel() returns true. */
@@ -71,7 +72,58 @@ function buildModel(
   return { movable, targetLength, constraints }
 }
 
-function buildChain(curve: Curve, resolution: number, random: () => number): ChainState {
+/** Keys ("curve:point") of every point whose tangent is decided by an orientation group. */
+function linkedKeys(groups: OrientationGroup[]): Set<string> {
+  return new Set(groups.flat().map(({ ref }) => `${ref.curve}:${ref.point}`))
+}
+
+const rotateVec = (v: Vec2, angle: number): Vec2 => {
+  const c = Math.cos(angle)
+  const s = Math.sin(angle)
+  return [v[0] * c - v[1] * s, v[0] * s + v[1] * c]
+}
+
+/**
+ * Keeps the tangents of linked points at their angular offsets. Each member
+ * reports its current tangent (de-rotated by its offset); the group moves to
+ * the mean, so the bending forces of every member's curve act on the shared
+ * angle. Each member's neighbors are then rotated about it onto that tangent.
+ */
+function enforceOrientationGroups(groups: OrientationGroup[], chains: ChainState[]): void {
+  for (const group of groups) {
+    let sum: Vec2 = [0, 0]
+    for (const { ref, angle } of group) {
+      const { pts, controlIndices } = chains[ref.curve]
+      const i = controlIndices[ref.point]
+      let t: Vec2 = [0, 0]
+      if (i > 0) t = add(t, normalize(sub(pts[i], pts[i - 1])))
+      if (i < pts.length - 1) t = add(t, normalize(sub(pts[i + 1], pts[i])))
+      sum = add(sum, rotateVec(normalize(t), -angle))
+    }
+    const shared = normalize(sum)
+    if (length(shared) === 0) continue
+    for (const { ref, angle } of group) {
+      const { pts, vel, controlIndices } = chains[ref.curve]
+      const i = controlIndices[ref.point]
+      const d = rotateVec(shared, angle)
+      if (i > 0) {
+        pts[i - 1] = sub(pts[i], scale(d, length(sub(pts[i], pts[i - 1]))))
+        vel[i - 1] = scale(d, dot(vel[i - 1], d))
+      }
+      if (i < pts.length - 1) {
+        pts[i + 1] = add(pts[i], scale(d, length(sub(pts[i + 1], pts[i]))))
+        vel[i + 1] = scale(d, dot(vel[i + 1], d))
+      }
+    }
+  }
+}
+
+function buildChain(
+  curve: Curve,
+  resolution: number,
+  random: () => number,
+  linked: (point: number) => boolean = () => false,
+): ChainState {
   const res = safeResolution(resolution)
   const plan = planCurve(curve, res)
   const pts: Vec2[] = []
@@ -117,7 +169,7 @@ function buildChain(curve: Curve, resolution: number, random: () => number): Cha
     return {
       movable: posFree,
       dir,
-      collinear: !dir && !posFree && j > 0 && j < lastControl,
+      collinear: !dir && !posFree && !linked(j) && j > 0 && j < lastControl,
     }
   })
 
@@ -181,12 +233,16 @@ export function solve(
   }
   const constantsIssue = validateConstants(constants)
   if (constantsIssue) throw new Error(constantsIssue)
-  const { setup, groups } = resolveSetup(authored)
+  const { setup, positionGroups, orientationGroups } = resolveSetup(authored)
 
   const { onProgress, shouldCancel, random = Math.random } = options
   const { h, epsilon, settleFrames, maxIter } = constants
 
-  const chains = setup.curves.map((curve) => buildChain(curve, setup.resolution, random))
+  const linked = linkedKeys(orientationGroups)
+  const chains = setup.curves.map((curve, ci) =>
+    buildChain(curve, setup.resolution, random, (pi) => linked.has(`${ci}:${pi}`)),
+  )
+  enforceOrientationGroups(orientationGroups, chains)
   const res = safeResolution(setup.resolution)
   const maxStep = MAX_STEP_FRACTION * res
   const countPoints = (): number => chains.reduce((sum, chain) => sum + chain.pts.length, 0)
@@ -237,19 +293,20 @@ export function solve(
     }
 
     // Points tied by a position constraint move as one: share their mean state.
-    for (const group of groups) {
-      const members = group.map((ref) => ({
+    for (const group of positionGroups) {
+      const members = group.map(({ ref, offset }) => ({
         chain: chains[ref.curve],
         idx: chains[ref.curve].controlIndices[ref.point],
+        offset,
       }))
       let px = 0, py = 0, vx = 0, vy = 0
-      for (const { chain, idx } of members) {
-        px += chain.pts[idx][0]; py += chain.pts[idx][1]
+      for (const { chain, idx, offset } of members) {
+        px += chain.pts[idx][0] - offset[0]; py += chain.pts[idx][1] - offset[1]
         vx += chain.vel[idx][0]; vy += chain.vel[idx][1]
       }
       const n = members.length
-      for (const { chain, idx } of members) {
-        chain.pts[idx][0] = px / n; chain.pts[idx][1] = py / n
+      for (const { chain, idx, offset } of members) {
+        chain.pts[idx][0] = px / n + offset[0]; chain.pts[idx][1] = py / n + offset[1]
         chain.vel[idx][0] = vx / n; chain.vel[idx][1] = vy / n
       }
     }
@@ -262,8 +319,9 @@ export function solve(
       }
       equalizeSegments(chain.pts, chain.vel, chain.controlIndices)
       enforceConstraints(chain.pts, chain.vel, chain.model.constraints)
-      verifyFinite(chain.pts, chain.vel, chain.vel)
     }
+    enforceOrientationGroups(orientationGroups, chains)
+    for (const chain of chains) verifyFinite(chain.pts, chain.vel, chain.vel)
     maxPoints = Math.max(maxPoints, countPoints())
 
     const ke = totalKineticEnergy(chains)
@@ -324,8 +382,12 @@ const EMPTY_LAYOUT: PreviewLayout = { curves: [], controlIndices: [] }
  */
 export function previewLayout(authored: Setup): PreviewLayout {
   try {
-    const { setup } = resolveSetup(authored)
-    const chains = setup.curves.map((curve) => buildChain(curve, setup.resolution, () => 0.5))
+    const { setup, orientationGroups } = resolveSetup(authored)
+    const linked = linkedKeys(orientationGroups)
+    const chains = setup.curves.map((curve, ci) =>
+      buildChain(curve, setup.resolution, () => 0.5, (pi) => linked.has(`${ci}:${pi}`)),
+    )
+    enforceOrientationGroups(orientationGroups, chains)
     const finite = chains.every((c) => c.pts.every((p) => Number.isFinite(p[0]) && Number.isFinite(p[1])))
     if (!finite) return EMPTY_LAYOUT
     return { curves: chains.map((c) => c.pts), controlIndices: chains.map((c) => c.controlIndices) }

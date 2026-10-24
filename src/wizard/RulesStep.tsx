@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
-import type { Constraint, Setup } from '../solver/types'
+import { useMemo } from 'react'
+import type { Constraint, PointId, Setup } from '../solver/types'
+import { locate, pointLabel } from '../solver/constraints'
 import { previewLayout } from '../solver/solve'
 import { NumberField } from '../ui/NumberField'
-import { addConstraint, removeConstraint, setCurveTargetLength } from '../ui/setupEdits'
+import { removeConstraint, setCurveTargetLength } from '../ui/setupEdits'
 import type { SetupApi } from './types'
 
 function polylineLength(pts: [number, number][]): number {
@@ -11,64 +12,18 @@ function polylineLength(pts: [number, number][]): number {
   return total
 }
 
-function pointLabel(ci: number, pi: number): string {
-  return `Curve ${ci + 1} · Point ${pi + 1}`
-}
-
-function describeConstraint(c: Constraint): string {
+function describeConstraint(setup: Setup, c: Constraint): string {
   const what = c.kind === 'position' ? 'position' : 'direction'
-  return `${pointLabel(c.target.curve, c.target.point)} copies the ${what} of ${pointLabel(c.source.curve, c.source.point)}`
+  const delta =
+    c.kind === 'orientation'
+      ? c.delta ? ` turned by ${c.delta}°` : ''
+      : c.delta && (c.delta[0] !== 0 || c.delta[1] !== 0) ? ` shifted by (${c.delta[0]}, ${c.delta[1]})` : ''
+  return `${pointLabel(setup, c.target)} follows the ${what} of ${pointLabel(setup, c.source)}${delta}`
 }
 
-function PointSelect({
-  label,
-  setup,
-  value,
-  onChange,
-}: {
-  label: string
-  setup: Setup
-  value: string
-  onChange: (v: string) => void
-}) {
-  return (
-    <label className="wiz-select">
-      <span className="wiz-field__label">{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)}>
-        {setup.curves.flatMap((c, ci) =>
-          c.fixPoints.map((_, pi) => (
-            <option key={`${ci}:${pi}`} value={`${ci}:${pi}`}>
-              {pointLabel(ci, pi)}
-            </option>
-          )),
-        )}
-      </select>
-    </label>
-  )
-}
-
-function parseRef(v: string) {
-  const [curve, point] = v.split(':').map(Number)
-  return { curve, point }
-}
-
-export function RulesStep({ api }: { api: SetupApi }) {
+export function RulesStep({ api, onEditPoint }: { api: SetupApi; onEditPoint: (id: PointId) => void }) {
   const { setup, update } = api
   const layout = useMemo(() => previewLayout(setup), [setup])
-  const [kind, setKind] = useState<Constraint['kind']>('position')
-  const [target, setTarget] = useState('0:0')
-  const [source, setSource] = useState('0:1')
-  const [message, setMessage] = useState<string | null>(null)
-
-  const addLink = () => {
-    const next = addConstraint(setup, { kind, target: parseRef(target), source: parseRef(source) })
-    if (next === setup) {
-      setMessage('That link is not possible (a point cannot copy itself, and links cannot form a loop).')
-      return
-    }
-    setMessage(null)
-    update(() => next)
-  }
 
   return (
     <div className="wiz-stack">
@@ -122,45 +77,34 @@ export function RulesStep({ api }: { api: SetupApi }) {
 
       <section className="wiz-card">
         <header className="wiz-card__head">
-          <h3>Links between points</h3>
+          <h3>Points that follow others</h3>
         </header>
-        <p className="wiz-note">Make a point copy another point’s position (to join curves) or direction (to continue smoothly).</p>
-        {(setup.constraints ?? []).length === 0 ? <p className="wiz-muted">No links yet.</p> : null}
+        <p className="wiz-note">
+          To make a point follow another one, open it and choose “Follow a point” for its position or direction.
+        </p>
+        {(setup.constraints ?? []).length === 0 ? <p className="wiz-muted">No point follows another yet.</p> : null}
         <ul className="wiz-list">
           {(setup.constraints ?? []).map((c, i) => (
-            <li key={i} className="wiz-list__item">
-              <span>{describeConstraint(c)}</span>
-              <button
-                type="button"
-                className="btn btn--sm btn--ghost btn--danger"
-                aria-label={`Remove link: ${describeConstraint(c)}`}
-                onClick={() => update((s) => removeConstraint(s, i))}
-              >
-                Remove
-              </button>
+            <li key={`${c.kind}:${c.target}`} className="wiz-list__item">
+              <span>{describeConstraint(setup, c)}</span>
+              <span className="wiz-row">
+                {locate(setup, c.target) ? (
+                  <button type="button" className="btn btn--sm" onClick={() => onEditPoint(c.target)}>
+                    Edit point
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn btn--sm btn--ghost btn--danger"
+                  aria-label={`Remove: ${describeConstraint(setup, c)}`}
+                  onClick={() => update((s) => removeConstraint(s, i))}
+                >
+                  Remove
+                </button>
+              </span>
             </li>
           ))}
         </ul>
-
-        <div className="wiz-form">
-          <PointSelect label="This point" setup={setup} value={target} onChange={setTarget} />
-          <label className="wiz-select">
-            <span className="wiz-field__label">copies the</span>
-            <select value={kind} onChange={(e) => setKind(e.target.value as Constraint['kind'])}>
-              <option value="position">position</option>
-              <option value="orientation">direction</option>
-            </select>
-          </label>
-          <PointSelect label="of this point" setup={setup} value={source} onChange={setSource} />
-          <button type="button" className="btn btn--primary" onClick={addLink}>
-            Add link
-          </button>
-        </div>
-        {message ? (
-          <p className="wiz-problem" role="alert">
-            {message}
-          </p>
-        ) : null}
       </section>
     </div>
   )

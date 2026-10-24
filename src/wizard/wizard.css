@@ -416,3 +416,57 @@
 .pose-editor__canvas canvas {
   touch-action: none;
 }
+
+/* Current state (read-only) vs. inputs (framed, on a raised surface). */
+.wiz-state {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+.wiz-state__tag {
+  flex: none;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.wiz-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+}
+
+.wiz-follow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.wiz-point.is-selected {
+  outline: 2px solid var(--accent);
+}
+
+.wiz-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
