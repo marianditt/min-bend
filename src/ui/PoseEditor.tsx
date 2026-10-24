@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { MouseEvent as ReactMouseEvent } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { Setup, Vec2 } from '../solver/types'
-import { previewPose } from '../solver/solve'
-import { planCurve } from '../solver/curve'
+import { previewLayout } from '../solver/solve'
 import {
   type Theme,
   LIGHT_THEME,
@@ -27,6 +26,11 @@ export interface PoseEditorProps {
   onRedo: () => void
   canUndo: boolean
   canRedo: boolean
+  /** Curve shown highlighted (and edited in sketch mode). */
+  activeCurve: number
+  onActiveCurve: (curve: number) => void
+  /** When false the canvas is a read-only preview: no guide points, no toolbar. */
+  sketch?: boolean
 }
 
 const MIN_ZOOM = 0.25
@@ -73,6 +77,7 @@ function drawScene(
   width: number,
   height: number,
   preview: Vec2[][],
+  controlIndices: number[][],
   setup: Setup,
   activeCurve: number,
   activeSpan: number,
@@ -89,7 +94,7 @@ function drawScene(
     const pts = preview[ci]
     if (!pts || pts.length < 2) return
     const screen = screenPoints(pts, project)
-    const ctrl = planCurve(curve, setup.resolution).controlIndices
+    const ctrl = controlIndices[ci] ?? []
     const isActive = ci === activeCurve
 
     ctx.save()
@@ -108,7 +113,7 @@ function drawScene(
       const fix = ctrl
       const from = fix[activeSpan]
       const to = fix[activeSpan + 1]
-      if (from !== undefined && to !== undefined) {
+      if (from !== undefined && to !== undefined && screen[from] && screen[to]) {
         ctx.strokeStyle = theme.point
         ctx.lineWidth = 3.4
         ctx.beginPath()
@@ -198,25 +203,36 @@ function TrashIcon() {
   )
 }
 
-export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: PoseEditorProps) {
+export function PoseEditor({
+  setup,
+  edit,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  activeCurve: activeCurveProp,
+  onActiveCurve,
+  sketch = false,
+}: PoseEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [ghost, setGhost] = useState<Vec2 | null>(null)
   const [view, setView] = useState<View>({ zoom: 1, x: 0, y: 0 })
-  const [activeCurveRaw, setActiveCurve] = useState(0)
   const [activeSpanRaw, setActiveSpan] = useState(0)
   const dark = usePrefersDark()
   const theme = dark ? DARK_THEME : LIGHT_THEME
 
   const dragRef = useRef<{ x: number; y: number; moved: boolean } | null>(null)
 
-  const activeCurve = Math.min(Math.max(activeCurveRaw, 0), setup.curves.length - 1)
+  const activeCurve = Math.min(Math.max(activeCurveProp, 0), Math.max(setup.curves.length - 1, 0))
   const curve = setup.curves[activeCurve]
-  const spanCount = Math.max(0, curve.fixPoints.length - 1)
+  const spanCount = Math.max(0, (curve?.fixPoints.length ?? 0) - 1)
   const activeSpan = Math.min(Math.max(activeSpanRaw, 0), Math.max(spanCount - 1, 0))
 
-  const preview = useMemo(() => previewPose(setup), [setup])
+  const layout = useMemo(() => previewLayout(setup), [setup])
+  const preview = layout.curves
+  const controlIndices = layout.controlIndices
   const bounds = useMemo(() => computePtsBounds(preview.flat()), [preview])
 
   const placed = curve?.spans[activeSpan]?.length ?? 0
@@ -244,8 +260,8 @@ export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: Po
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const project = makeViewProjector(bounds, size.width, size.height, view)
-    drawScene(ctx, size.width, size.height, preview, setup, activeCurve, activeSpan, project, theme, ghost)
-  }, [preview, bounds, size, view, theme, setup, activeCurve, activeSpan, ghost])
+    drawScene(ctx, size.width, size.height, preview, controlIndices, setup, activeCurve, activeSpan, project, theme, ghost)
+  }, [preview, controlIndices, bounds, size, view, theme, setup, activeCurve, activeSpan, ghost])
 
   // Wheel zoom must be non-passive to call preventDefault.
   useEffect(() => {
@@ -276,7 +292,7 @@ export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: Po
     return () => canvas.removeEventListener('wheel', onWheel)
   }, [bounds, size])
 
-  const localPoint = (event: ReactMouseEvent<HTMLCanvasElement>) => {
+  const localPoint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
@@ -289,14 +305,15 @@ export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: Po
     return [project.worldX(px), project.worldY(py)]
   }
 
-  const handleMouseDown = (event: ReactMouseEvent<HTMLCanvasElement>) => {
-    if (event.button !== 0) return
+  const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    event.currentTarget.setPointerCapture?.(event.pointerId)
     dragRef.current = { x: event.clientX, y: event.clientY, moved: false }
   }
 
-  const handleMouseMove = (event: ReactMouseEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current
-    if (drag && (event.buttons & 1) === 1) {
+    if (drag) {
       const dx = event.clientX - drag.x
       const dy = event.clientY - drag.y
       if (Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) drag.moved = true
@@ -306,20 +323,21 @@ export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: Po
         setView((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }))
       }
     }
-    const point = localPoint(event)
-    if (point) setGhost(worldAt(point.x, point.y))
+    if (sketch && event.pointerType === 'mouse') {
+      const point = localPoint(event)
+      if (point) setGhost(worldAt(point.x, point.y))
+    }
   }
 
-  const handleMouseUp = () => {
+  // A tap (pointer released without dragging) places a guide point in sketch mode.
+  const handlePointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const drag = dragRef.current
     dragRef.current = null
-  }
-
-  const handleClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
-    if (dragRef.current?.moved) return
+    if (!drag || drag.moved || !sketch || spanCount === 0) return
     const point = localPoint(event)
     if (!point) return
     const world = worldAt(point.x, point.y)
-    if (!world) return
+    if (!world || !world.every(Number.isFinite)) return
     edit((s) => addFreePoint(s, activeCurve, activeSpan, world))
   }
 
@@ -328,6 +346,7 @@ export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: Po
   }, [edit, activeCurve, activeSpan])
 
   useEffect(() => {
+    if (!sketch) return
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
       const tag = target?.tagName
@@ -352,7 +371,7 @@ export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: Po
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [handleRemoveLast, onUndo, onRedo])
+  }, [sketch, handleRemoveLast, onUndo, onRedo])
 
   const zoomBy = (factor: number) =>
     setView((prev) => ({
@@ -363,94 +382,90 @@ export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: Po
   const resetView = () => setView({ zoom: 1, x: 0, y: 0 })
 
   return (
-    <div className="pose-editor">
-      <div className="pose-editor__head">
-        <h2 className="pose-editor__title">Design the curves</h2>
-        <span className="pose-editor__counter">
-          span {activeSpan + 1}: {placed} guide points
-        </span>
-      </div>
-      <p className="pose-editor__hint">
-        Click to place guide points that shape the initial layout of the active span; drag to pan, scroll to
-        zoom. The number of line segments follows from the resolution.
-      </p>
-
-      <div className="pose-editor__selectors">
-        <div className="chip-row" role="tablist" aria-label="Curves">
-          {setup.curves.map((_, ci) => (
-            <button
-              key={ci}
-              type="button"
-              role="tab"
-              aria-selected={ci === activeCurve}
-              className={`chip ${ci === activeCurve ? 'is-active' : ''}`}
-              onClick={() => {
-                setActiveCurve(ci)
-                setActiveSpan(0)
-              }}
-            >
-              Curve {ci + 1}
-            </button>
-          ))}
+    <div className={`pose-editor ${sketch ? 'pose-editor--sketch' : ''}`}>
+      {sketch ? (
+        <div className="pose-editor__selectors">
+          <div className="chip-row" role="tablist" aria-label="Curves">
+            {setup.curves.map((_, ci) => (
+              <button
+                key={ci}
+                type="button"
+                role="tab"
+                aria-selected={ci === activeCurve}
+                className={`chip ${ci === activeCurve ? 'is-active' : ''}`}
+                onClick={() => {
+                  onActiveCurve(ci)
+                  setActiveSpan(0)
+                }}
+              >
+                Curve {ci + 1}
+              </button>
+            ))}
+          </div>
+          {spanCount > 1 ? (
+            <div className="chip-row" role="tablist" aria-label="Sections of the curve">
+              {Array.from({ length: spanCount }, (_, si) => (
+                <button
+                  key={si}
+                  type="button"
+                  role="tab"
+                  aria-selected={si === activeSpan}
+                  className={`chip chip--sm ${si === activeSpan ? 'is-active' : ''}`}
+                  onClick={() => setActiveSpan(si)}
+                >
+                  Between points {si + 1}–{si + 2}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
-        <div className="chip-row" role="tablist" aria-label="Spans">
-          {Array.from({ length: spanCount }, (_, si) => (
-            <button
-              key={si}
-              type="button"
-              role="tab"
-              aria-selected={si === activeSpan}
-              className={`chip chip--sm ${si === activeSpan ? 'is-active' : ''}`}
-              onClick={() => setActiveSpan(si)}
-            >
-              Span {si + 1}
-            </button>
-          ))}
-        </div>
-      </div>
+      ) : null}
 
       <div className="pose-editor__canvas" ref={containerRef}>
         <canvas
           ref={canvasRef}
           role="img"
-          aria-label="Curve editor canvas: click to place free interior points"
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onClick={handleClick}
-          onMouseLeave={() => {
-            setGhost(null)
+          aria-label={sketch ? 'Sketch area: tap to place guide points' : 'Preview of your curves'}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={() => {
             dragRef.current = null
           }}
+          onPointerLeave={() => setGhost(null)}
         />
       </div>
 
       <div className="pose-editor__bar">
-        <div className="pose-editor__actions" role="group" aria-label="Edit history">
-          <button type="button" className="btn btn--sm pose-editor__action" data-action="undo" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={onUndo}>
-            <UndoIcon /> Undo
-          </button>
-          <button type="button" className="btn btn--sm pose-editor__action" data-action="redo" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={onRedo}>
-            <RedoIcon /> Redo
-          </button>
-          <button
-            type="button"
-            className="btn btn--sm pose-editor__action"
-            data-action="clear"
-            title="Clear the active span's free points"
-            disabled={placed === 0}
-            onClick={() => edit((s) => clearSpan(s, activeCurve, activeSpan))}
-          >
-            <TrashIcon /> Clear span
-          </button>
-        </div>
+        {sketch ? (
+          <div className="pose-editor__actions" role="group" aria-label="Edit history">
+            <button type="button" className="btn btn--sm" data-action="undo" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={onUndo}>
+              <UndoIcon /> Undo
+            </button>
+            <button type="button" className="btn btn--sm" data-action="redo" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={onRedo}>
+              <RedoIcon /> Redo
+            </button>
+            <button
+              type="button"
+              className="btn btn--sm"
+              data-action="clear"
+              title="Remove the guide points of this section"
+              disabled={placed === 0}
+              onClick={() => edit((s) => clearSpan(s, activeCurve, activeSpan))}
+            >
+              <TrashIcon /> Clear guides{placed > 0 ? ` (${placed})` : ''}
+            </button>
+          </div>
+        ) : (
+          <span className="pose-editor__caption">Preview · drag to pan, scroll to zoom</span>
+        )}
 
         <div className="pose-editor__zoom" role="group" aria-label="View zoom">
           <button type="button" className="btn btn--sm" data-action="zoom-out" aria-label="Zoom out" title="Zoom out" onClick={() => zoomBy(1 / 1.25)}>
             −
           </button>
           <button type="button" className="btn btn--sm" data-action="zoom-reset" title="Reset zoom" onClick={resetView}>
-            Reset view
+            Fit
           </button>
           <button type="button" className="btn btn--sm" data-action="zoom-in" aria-label="Zoom in" title="Zoom in" onClick={() => zoomBy(1.25)}>
             +

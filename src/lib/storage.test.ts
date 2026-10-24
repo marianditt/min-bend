@@ -136,3 +136,22 @@ describe('storage round-trip', () => {
     expect(loaded?.constants).toEqual(DEFAULT_CONSTANTS)
   })
 })
+
+describe('legacy constants', () => {
+  it('ignores a removed kLen field and fills missing constants', () => {
+    const storage = makeStorage()
+    vi.stubGlobal('localStorage', storage)
+    storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: STORAGE_VERSION,
+        setup: { curves: [{ fixPoints: [{ pos: [0, 0], orientation: null }, { pos: [1, 0], orientation: null }], spans: [[]] }], resolution: 1 },
+        constants: { kLen: 5, kBend: 2 },
+      }),
+    )
+    const loaded = loadState()
+    expect(loaded?.constants.kBend).toBe(2)
+    expect(loaded?.constants).not.toHaveProperty('kLen')
+    expect(loaded?.constants.gamma).toBeGreaterThan(0)
+  })
+})

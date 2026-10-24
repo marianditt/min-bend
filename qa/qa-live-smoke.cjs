@@ -28,20 +28,25 @@ const LIVE_URL = process.env.QA_LIVE_URL || 'https://marianditt.github.io/min-be
   try {
     const resp = await page.goto(LIVE_URL, { waitUntil: 'load', timeout: 45000 })
     console.log('http status:', resp.status())
-    await page.waitForSelector('h1.app__title', { timeout: 15000 })
-    console.log('title:', (await page.textContent('h1.app__title')).trim())
+    await page.waitForSelector('h1.wiz__title', { timeout: 15000 })
+    console.log('title:', (await page.textContent('h1.wiz__title')).trim())
     console.log('editor visible:', await page.isVisible('.pose-editor'))
 
-    await page.locator('.sidebar__actions button.btn--primary').click()
-    await page.waitForSelector('.notice--success', { timeout: 90000 })
-    const txt = (await page.textContent('.notice--success')).trim()
-    console.log('notice:', txt)
+    // Rules: a loop needs a fixed length, then solve.
+    await page.getByRole('button', { name: /Next: Rules/ }).click()
+    await page.getByRole('button', { name: 'Fixed length' }).click()
+    await page.getByRole('button', { name: /Next: Sketch/ }).click()
+    await page.getByRole('button', { name: /Review & solve/ }).click()
+    await page.locator('.btn--lg').click()
+    await page.waitForSelector('.wiz-banner.is-ok', { timeout: 90000 })
+    const txt = (await page.textContent('.wiz-banner')).trim()
+    console.log('banner:', txt)
     console.log('player visible:', await page.isVisible('.player'))
 
     const scale = await page.evaluate(() => Number(document.querySelector('canvas')?.dataset.scale || '-1'))
     console.log('canvas scale:', scale)
     console.log('console errors:', errs.filter((e) => !/favicon/i.test(e)).length)
-    console.log(/Converged/.test(txt) ? '\nLIVE SMOKE: PASS' : '\nLIVE SMOKE: FAIL')
+    console.log(/settled/.test(txt) ? '\nLIVE SMOKE: PASS' : '\nLIVE SMOKE: FAIL')
   } catch (e) {
     console.log('LIVE SMOKE: FAIL —', e.message)
   } finally {

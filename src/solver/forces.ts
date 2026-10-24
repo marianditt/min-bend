@@ -120,16 +120,17 @@ export interface PointConstraint {
 export interface ChainModel {
   /** Whether each point is integrated (false = pinned). */
   movable: boolean[]
-  /** Target length of each segment. */
-  targets: number[]
+  /** Target total path length of the chain, or null when its length is free. */
+  targetLength: number | null
   constraints: PointConstraint[]
 }
 
-function lengthTerm(model: ChainModel, lengths: number[], k: number, kLen: number): number {
-  const len = lengths[k]
-  if (len < EPS_STABILIZE) return 0
-  return (len - model.targets[k]) * kLen
-}
+/**
+ * Stiffness of the whole-curve length constraint. The resulting tension is the
+ * same on every segment: segments are free to shrink and grow, only the sum is
+ * pulled toward the target.
+ */
+export const LENGTH_STIFFNESS = 20
 
 /** Total acceleration of every movable point of a chain (mass = 1). */
 export function computeAcceleration(
@@ -140,6 +141,12 @@ export function computeAcceleration(
 ): Vec2[] {
   const last = pts.length - 1
   const { lengths, unitVecs } = computeSegments(pts)
+  let tension = 0
+  if (model.targetLength !== null) {
+    let total = 0
+    for (const len of lengths) total += len
+    tension = (total - model.targetLength) * LENGTH_STIFFNESS
+  }
 
   const accel: Vec2[] = new Array(pts.length)
   for (let i = 0; i <= last; i++) accel[i] = [0, 0]
@@ -147,8 +154,10 @@ export function computeAcceleration(
   for (let i = 0; i <= last; i++) {
     if (!model.movable[i]) continue
     let force: Vec2 = computeFrictionForce(vel[i], constants.gamma)
-    if (i < last) force = add(force, scale(unitVecs[i], lengthTerm(model, lengths, i, constants.kLen)))
-    if (i > 0) force = sub(force, scale(unitVecs[i - 1], lengthTerm(model, lengths, i - 1, constants.kLen)))
+    if (tension !== 0) {
+      if (i < last) force = add(force, scale(unitVecs[i], tension))
+      if (i > 0) force = sub(force, scale(unitVecs[i - 1], tension))
+    }
     accel[i] = force
   }
 

@@ -1,145 +1,143 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSolver } from './hooks/useSolver'
 import { useSetupState } from './hooks/useSetupState'
-import { Player } from './player/Player'
-import { Sidebar } from './ui/Sidebar'
-import { PoseEditor } from './ui/PoseEditor'
-import { toggleCurveHidden } from './ui/setupEdits'
-import type { PhysicsConstants, Setup } from './solver/types'
-import { formatEnergy } from './lib/format'
+import { ErrorBoundary } from './ui/ErrorBoundary'
+import { PointsStep } from './wizard/PointsStep'
+import { RulesStep } from './wizard/RulesStep'
+import { SketchStep } from './wizard/SketchStep'
+import { RunStep } from './wizard/RunStep'
+import { ResultStep } from './wizard/ResultStep'
+import { STEPS, type StepId } from './wizard/types'
+import type { Setup } from './solver/types'
+import './wizard/wizard.css'
 
-function MarkIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M3 19c3-11 7-11 9-4s6 7 9-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <rect x="1.5" y="17.5" width="4" height="4" rx="1" fill="currentColor" />
-      <rect x="19" y="15" width="4" height="4" rx="1" fill="currentColor" />
-    </svg>
-  )
-}
-
-function ProgressRing({ fraction, iteration }: { fraction: number; iteration: number }) {
-  const size = 168
-  const stroke = 10
-  const radius = (size - stroke) / 2
-  const circumference = 2 * Math.PI * radius
-  const clamped = Math.max(0, Math.min(1, fraction))
-  const percent = Math.round(clamped * 100)
-  return (
-    <div className="ring-wrap" style={{ width: size, height: size }}>
-      <svg className="ring" width={size} height={size} role="img" aria-label={`Solving, ${percent} percent complete`}>
-        <circle className="ring__track" cx={size / 2} cy={size / 2} r={radius} fill="none" strokeWidth={stroke} />
-        <circle
-          className="ring__value"
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          strokeWidth={stroke}
-          strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - clamped)}
-        />
-      </svg>
-      <div className="ring__label">
-        <span className="ring__percent">{percent}%</span>
-        <span className="ring__meta">{iteration.toLocaleString()} steps</span>
-      </div>
-    </div>
-  )
+/** Setup identity for staleness checks; visibility is display-only. */
+function fingerprint(setup: Setup, constants: unknown): string {
+  return JSON.stringify([
+    setup.curves.map((c) => ({ ...c, hidden: undefined })),
+    setup.constraints,
+    setup.resolution,
+    constants,
+  ])
 }
 
 function App() {
   const { compute, cancel, state } = useSolver()
-  const { status, progress, iteration, ke, result, error } = state
+  const api = useSetupState()
+  const [stepId, setStepId] = useState<StepId>('points')
   const [playerKey, setPlayerKey] = useState(0)
-  const [editing, setEditing] = useState(false)
-  const setup = useSetupState()
+  const [ranWith, setRanWith] = useState<string | null>(null)
+  const topRef = useRef<HTMLElement>(null)
 
-  const handleCompute = useCallback(
-    (next: Setup, constants: PhysicsConstants) => {
-      setEditing(false)
-      setPlayerKey((key) => key + 1)
-      compute(next, constants)
+  const stepIndex = STEPS.findIndex((s) => s.id === stepId)
+  const step = STEPS[stepIndex]
+  const running = state.status === 'running'
+  const result = state.status === 'done' ? state.result : null
+  const stale = ranWith !== null && ranWith !== fingerprint(api.setup, api.constants)
+
+  const run = useCallback(() => {
+    setPlayerKey((k) => k + 1)
+    setRanWith(fingerprint(api.setup, api.constants))
+    setStepId('run')
+    compute(api.setup, api.constants)
+  }, [api.setup, api.constants, compute])
+
+  // Show the result as soon as a run finishes.
+  const wasRunning = useRef(false)
+  useEffect(() => {
+    if (wasRunning.current && state.status === 'done') setStepId('result')
+    wasRunning.current = running
+  }, [running, state.status])
+
+  useEffect(() => {
+    topRef.current?.scrollTo?.({ top: 0 })
+  }, [stepId])
+
+  const go = useCallback(
+    (id: StepId) => {
+      if (running) return
+      if (id === 'result' && !result) return
+      setStepId(id)
     },
-    [compute],
+    [running, result],
   )
 
-  const hidden = useMemo(() => setup.setup.curves.map((curve) => !!curve.hidden), [setup.setup])
-  const handleToggleHidden = useCallback(
-    (ci: number) => setup.update((s) => toggleCurveHidden(s, ci)),
-    [setup],
-  )
+  const next = STEPS[stepIndex + 1]
+  const prev = STEPS[stepIndex - 1]
+  const canNext = !!next && !running && (next.id !== 'result' || !!result)
+  const nextLabel = next?.id === 'run' ? 'Review & solve' : next?.id === 'result' ? 'View result' : `Next: ${next?.label}`
 
-  const resultIterations = result ? (result.meta.iterations ?? result.frames.length) : null
-  const termination = result ? result.meta.termination : null
-
-  const running = status === 'running'
-  const showPlayer = !running && !editing && status === 'done' && result !== null
+  const body = useMemo(() => {
+    switch (stepId) {
+      case 'points':
+        return <PointsStep api={api} />
+      case 'rules':
+        return <RulesStep api={api} />
+      case 'sketch':
+        return <SketchStep api={api} />
+      case 'run':
+        return <RunStep api={api} solver={state} onRun={run} onCancel={cancel} onGoto={go} />
+      case 'result':
+        return result ? (
+          <ResultStep
+            api={api}
+            result={result}
+            playerKey={playerKey}
+            stale={stale}
+            onRerun={run}
+            onEdit={() => setStepId('points')}
+          />
+        ) : (
+          <p className="wiz-note">No result yet. Solve first.</p>
+        )
+    }
+  }, [stepId, api, state, run, cancel, go, result, playerKey, stale])
 
   return (
-    <div className="app">
-      <header className="app__header">
-        <span className="app__mark">
-          <MarkIcon />
-        </span>
-        <h1 className="app__title">Minimum-Bend Elastic Chain</h1>
-        <span className="app__subtitle">relaxation solver · web worker</span>
+    <div className="wiz">
+      <header className="wiz__header">
+        <h1 className="wiz__title">Minimum-Bend Curves</h1>
+        <nav aria-label="Steps">
+          <ol className="wiz-steps">
+            {STEPS.map((s, i) => (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  className={`wiz-steps__btn ${s.id === stepId ? 'is-current' : ''} ${i < stepIndex ? 'is-past' : ''}`}
+                  aria-current={s.id === stepId ? 'step' : undefined}
+                  disabled={running || (s.id === 'result' && !result)}
+                  onClick={() => go(s.id)}
+                >
+                  <span className="wiz-steps__num">{i + 1}</span>
+                  <span className="wiz-steps__label">{s.label}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </nav>
       </header>
 
-      <div className="app__body">
-        <Sidebar
-          status={status}
-          progress={progress}
-          iteration={iteration}
-          ke={ke}
-          resultIterations={resultIterations}
-          termination={termination}
-          error={error}
-          setup={setup.setup}
-          constants={setup.constants}
-          onEdit={setup.update}
-          onConstantsChange={setup.setConstants}
-          onReset={setup.reset}
-          onCompute={handleCompute}
-          onCancel={cancel}
-        />
+      <main className="wiz__main" ref={topRef}>
+        <div className="wiz__intro">
+          <p className="wiz__count">Step {stepIndex + 1} of {STEPS.length}</p>
+          <h2>{step.title}</h2>
+          <p className="wiz-note">{step.help}</p>
+        </div>
+        <ErrorBoundary key={stepId} onReset={api.reset}>
+          {body}
+        </ErrorBoundary>
+      </main>
 
-        <main className="app__stage">
-          {running ? (
-            <div className="stage-center">
-              <ProgressRing fraction={progress} iteration={iteration} />
-              <p className="stage-center__text">Relaxing the chain — kinetic energy {formatEnergy(ke)}</p>
-              <button type="button" className="btn btn--danger" onClick={cancel}>
-                Cancel
-              </button>
-            </div>
-          ) : showPlayer ? (
-            <div className="stage-view">
-              <div className="stage-view__bar">
-                <button type="button" className="btn btn--ghost btn--sm" onClick={() => setEditing(true)}>
-                  ← Edit setup
-                </button>
-                <span className="stage-view__note">Simulation result</span>
-              </div>
-              <Player
-                key={playerKey}
-                frameSet={result as NonNullable<typeof result>}
-                hidden={hidden}
-                onToggleHidden={handleToggleHidden}
-              />
-            </div>
-          ) : (
-            <PoseEditor
-              setup={setup.setup}
-              edit={setup.update}
-              onUndo={setup.undo}
-              onRedo={setup.redo}
-              canUndo={setup.canUndo}
-              canRedo={setup.canRedo}
-            />
-          )}
-        </main>
-      </div>
+      <footer className="wiz__footer">
+        <button type="button" className="btn" disabled={!prev || running} onClick={() => prev && go(prev.id)}>
+          ← Back
+        </button>
+        {next ? (
+          <button type="button" className="btn btn--primary" disabled={!canNext} onClick={() => go(next.id)}>
+            {nextLabel} →
+          </button>
+        ) : null}
+      </footer>
     </div>
   )
 }

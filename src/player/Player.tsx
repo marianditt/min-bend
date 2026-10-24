@@ -258,7 +258,7 @@ export function Player({ frameSet, hidden, onToggleHidden }: PlayerProps) {
           <span>
             {curveCount} curve{curveCount === 1 ? '' : 's'}
           </span>
-          <span>{frameSet.meta.N} pts</span>
+          <span>{currentFrame?.curves.reduce((n, c) => n + c.length, 0) ?? 0} pts</span>
           <span>KE {formatEnergy(ke)}</span>
         </div>
       </div>
