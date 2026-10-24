@@ -10,10 +10,12 @@ function rng(seed: number) {
 
 function randomSetup(r: () => number): Setup {
   const n = 1 + Math.floor(r() * 3)
+  let id = 0
   const curves = Array.from({ length: n }, () => {
     const pts = 2 + Math.floor(r() * 3)
     return {
       fixPoints: Array.from({ length: pts }, () => ({
+        id: `p${++id}`,
         pos: [Math.round((r() - 0.5) * 20), Math.round((r() - 0.5) * 20)] as [number, number],
         orientation: r() < 0.5 ? ([Math.cos(r() * 6), Math.sin(r() * 6)] as [number, number]) : null,
         ...(r() < 0.3 ? { posFree: true } : {}),
@@ -26,11 +28,13 @@ function randomSetup(r: () => number): Setup {
   for (let i = 0; i < 3; i++) {
     const c = Math.floor(r() * n)
     const d = Math.floor(r() * n)
-    constraints.push({
-      kind: r() < 0.5 ? ('position' as const) : ('orientation' as const),
-      source: { curve: c, point: Math.floor(r() * curves[c].fixPoints.length) },
-      target: { curve: d, point: Math.floor(r() * curves[d].fixPoints.length) },
-    })
+    const source = curves[c].fixPoints[Math.floor(r() * curves[c].fixPoints.length)].id
+    const target = curves[d].fixPoints[Math.floor(r() * curves[d].fixPoints.length)].id
+    constraints.push(
+      r() < 0.5
+        ? { kind: 'position' as const, source, target, delta: [r() - 0.5, r() - 0.5] as [number, number] }
+        : { kind: 'orientation' as const, source, target, delta: r() * 90 },
+    )
   }
   return { curves, constraints, resolution: 0.5 + r() * 2 }
 }

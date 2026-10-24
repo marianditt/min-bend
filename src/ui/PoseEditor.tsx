@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import type { Setup, Vec2 } from '../solver/types'
+import type { PointId, Setup, Vec2 } from '../solver/types'
+import { constraintFor, locate } from '../solver/constraints'
 import { previewLayout } from '../solver/solve'
 import {
   type Theme,
@@ -16,12 +17,14 @@ import {
   usePrefersDark,
 } from '../player/canvasKit'
 import type { Bounds } from '../player/canvasKit'
-import { addFreePoint, clearSpan, removeLastFreePoint } from './setupEdits'
+import { addCurveThrough, addFixPointAt, addFreePoint, clearSpan, moveFixTo, removeLastFreePoint } from './setupEdits'
+import { simplifyStroke } from './sketch'
 import './poseEditor.css'
 
 export interface PoseEditorProps {
   setup: Setup
-  edit: (mutator: (setup: Setup) => Setup) => void
+  /** Applies an edit; `history: false` replaces the setup without adding an undo step. */
+  edit: (mutator: (setup: Setup) => Setup, options?: { history?: boolean }) => void
   onUndo: () => void
   onRedo: () => void
   canUndo: boolean
@@ -29,9 +32,24 @@ export interface PoseEditorProps {
   /** Curve shown highlighted (and edited in sketch mode). */
   activeCurve: number
   onActiveCurve: (curve: number) => void
-  /** When false the canvas is a read-only preview: no guide points, no toolbar. */
+  /** Guide point mode: tap to drop guide points between control points. */
   sketch?: boolean
+  /** Drawing mode: move, add and sketch control points and curves right on the canvas. */
+  draw?: boolean
+  /** Control point shown with a ring (the one being edited elsewhere). */
+  selectedPoint?: PointId | null
+  /** Called when a control point is tapped in drawing mode. */
+  onSelectPoint?: (id: PointId) => void
 }
+
+type Tool = 'move' | 'add' | 'sketch'
+
+/** Pointer distance (px) within which a tap grabs a control point. */
+const HIT_RADIUS = 16
+/** Simplification tolerance (px) of a sketched stroke. */
+const STROKE_TOLERANCE = 14
+/** Smallest stroke length (px) that becomes a curve. */
+const MIN_STROKE = 24
 
 const MIN_ZOOM = 0.25
 const MAX_ZOOM = 12
@@ -84,6 +102,8 @@ function drawScene(
   project: ViewProjector,
   theme: Theme,
   ghost: Vec2 | null,
+  selected: PointId | null,
+  stroke: Vec2[],
 ) {
   ctx.fillStyle = theme.bg
   ctx.fillRect(0, 0, width, height)
@@ -164,6 +184,33 @@ function drawScene(
     ctx.restore()
   })
 
+  const selectedRef = selected ? locate(setup, selected) : null
+  if (selectedRef) {
+    const idx = controlIndices[selectedRef.curve]?.[selectedRef.point]
+    const pts = preview[selectedRef.curve]
+    if (idx !== undefined && pts?.[idx]) {
+      ctx.save()
+      ctx.strokeStyle = theme.point
+      ctx.lineWidth = 2.4
+      ctx.beginPath()
+      ctx.arc(project.toX(pts[idx][0]), project.toY(pts[idx][1]), 11, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.restore()
+    }
+  }
+
+  if (stroke.length > 1) {
+    ctx.save()
+    ctx.strokeStyle = theme.point
+    ctx.lineWidth = 2
+    ctx.setLineDash([6, 4])
+    ctx.beginPath()
+    ctx.moveTo(project.toX(stroke[0][0]), project.toY(stroke[0][1]))
+    for (const p of stroke.slice(1)) ctx.lineTo(project.toX(p[0]), project.toY(p[1]))
+    ctx.stroke()
+    ctx.restore()
+  }
+
   if (ghost) {
     ctx.save()
     ctx.globalAlpha = 0.6
@@ -213,6 +260,9 @@ export function PoseEditor({
   activeCurve: activeCurveProp,
   onActiveCurve,
   sketch = false,
+  draw = false,
+  selectedPoint = null,
+  onSelectPoint,
 }: PoseEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -223,7 +273,17 @@ export function PoseEditor({
   const dark = usePrefersDark()
   const theme = dark ? DARK_THEME : LIGHT_THEME
 
-  const dragRef = useRef<{ x: number; y: number; moved: boolean } | null>(null)
+  const [tool, setTool] = useState<Tool>('move')
+  const [stroke, setStroke] = useState<Vec2[]>([])
+  // The view fits the curves; while a point is dragged the fit is frozen so the picture does not rescale under the pointer.
+  const [frozenBounds, setFrozenBounds] = useState<Bounds | null>(null)
+
+  const dragRef = useRef<
+    | { kind: 'pan'; x: number; y: number; moved: boolean }
+    | { kind: 'point'; id: PointId; x: number; y: number; moved: boolean; movable: boolean }
+    | { kind: 'stroke'; points: Vec2[] }
+    | null
+  >(null)
 
   const activeCurve = Math.min(Math.max(activeCurveProp, 0), Math.max(setup.curves.length - 1, 0))
   const curve = setup.curves[activeCurve]
@@ -233,7 +293,8 @@ export function PoseEditor({
   const layout = useMemo(() => previewLayout(setup), [setup])
   const preview = layout.curves
   const controlIndices = layout.controlIndices
-  const bounds = useMemo(() => computePtsBounds(preview.flat()), [preview])
+  const liveBounds = useMemo(() => computePtsBounds(preview.flat()), [preview])
+  const bounds = frozenBounds ?? liveBounds
 
   const placed = curve?.spans[activeSpan]?.length ?? 0
 
@@ -260,8 +321,8 @@ export function PoseEditor({
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const project = makeViewProjector(bounds, size.width, size.height, view)
-    drawScene(ctx, size.width, size.height, preview, controlIndices, setup, activeCurve, activeSpan, project, theme, ghost)
-  }, [preview, controlIndices, bounds, size, view, theme, setup, activeCurve, activeSpan, ghost])
+    drawScene(ctx, size.width, size.height, preview, controlIndices, setup, activeCurve, activeSpan, project, theme, ghost, selectedPoint, stroke)
+  }, [preview, controlIndices, bounds, size, view, theme, setup, activeCurve, activeSpan, ghost, selectedPoint, stroke])
 
   // Wheel zoom must be non-passive to call preventDefault.
   useEffect(() => {
@@ -305,15 +366,85 @@ export function PoseEditor({
     return [project.worldX(px), project.worldY(py)]
   }
 
+  /** The control point under the pointer, if any (nearest within reach). */
+  const hitControlPoint = (px: number, py: number): { ci: number; pi: number; id: PointId } | null => {
+    if (size.width <= 0 || size.height <= 0) return null
+    const project = makeViewProjector(bounds, size.width, size.height, view)
+    let best: { ci: number; pi: number; id: PointId } | null = null
+    let bestDist = HIT_RADIUS
+    setup.curves.forEach((c, ci) => {
+      c.fixPoints.forEach((fp, pi) => {
+        const p = preview[ci]?.[controlIndices[ci]?.[pi]]
+        if (!p) return
+        const d = Math.hypot(project.toX(p[0]) - px, project.toY(p[1]) - py)
+        if (d <= bestDist) {
+          best = { ci, pi, id: fp.id }
+          bestDist = d
+        }
+      })
+    })
+    return best
+  }
+
   const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
     event.currentTarget.setPointerCapture?.(event.pointerId)
-    dragRef.current = { x: event.clientX, y: event.clientY, moved: false }
+    const point = localPoint(event)
+    if (draw && point && tool === 'sketch') {
+      const world = worldAt(point.x, point.y)
+      if (world) {
+        dragRef.current = { kind: 'stroke', points: [world] }
+        setFrozenBounds(liveBounds)
+        setStroke([world])
+        return
+      }
+    }
+    if (draw && point && tool === 'move') {
+      const hit = hitControlPoint(point.x, point.y)
+      if (hit) {
+        dragRef.current = {
+          kind: 'point',
+          id: hit.id,
+          x: event.clientX,
+          y: event.clientY,
+          moved: false,
+          movable: !constraintFor(setup, 'position', hit.id),
+        }
+        return
+      }
+    }
+    dragRef.current = { kind: 'pan', x: event.clientX, y: event.clientY, moved: false }
   }
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current
-    if (drag) {
+    const point = localPoint(event)
+    if (drag?.kind === 'stroke') {
+      const world = point && worldAt(point.x, point.y)
+      if (world) {
+        drag.points.push(world)
+        setStroke([...drag.points])
+      }
+    } else if (drag?.kind === 'point') {
+      const dx = event.clientX - drag.x
+      const dy = event.clientY - drag.y
+      if (!drag.moved && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
+        drag.moved = true
+        if (drag.movable) setFrozenBounds(liveBounds)
+        if (drag.movable) edit((s) => ({ ...s }))
+      }
+      const world = point && worldAt(point.x, point.y)
+      if (drag.moved && drag.movable && world) {
+        const id = drag.id
+        edit(
+          (s) => {
+            const ref = locate(s, id)
+            return ref ? moveFixTo(s, ref.curve, ref.point, world) : s
+          },
+          { history: false },
+        )
+      }
+    } else if (drag) {
       const dx = event.clientX - drag.x
       const dy = event.clientY - drag.y
       if (Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) drag.moved = true
@@ -323,22 +454,54 @@ export function PoseEditor({
         setView((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }))
       }
     }
-    if (sketch && event.pointerType === 'mouse') {
-      const point = localPoint(event)
-      if (point) setGhost(worldAt(point.x, point.y))
+    if ((sketch || (draw && tool === 'add')) && event.pointerType === 'mouse' && point) {
+      setGhost(worldAt(point.x, point.y))
     }
   }
 
-  // A tap (pointer released without dragging) places a guide point in sketch mode.
+  // A tap (pointer released without dragging) places a guide/control point; a finished stroke becomes a curve.
   const handlePointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current
     dragRef.current = null
-    if (!drag || drag.moved || !sketch || spanCount === 0) return
+    setStroke([])
+    setFrozenBounds(null)
+    if (!drag) return
+
+    if (drag.kind === 'stroke') {
+      const project = makeViewProjector(bounds, size.width, size.height, view)
+      let pixels = 0
+      for (let i = 1; i < drag.points.length; i++) {
+        pixels +=
+          Math.hypot(drag.points[i][0] - drag.points[i - 1][0], drag.points[i][1] - drag.points[i - 1][1]) *
+          project.scale
+      }
+      if (pixels < MIN_STROKE) return
+      const simplified = simplifyStroke(drag.points, STROKE_TOLERANCE / project.scale)
+      if (simplified.length < 2) return
+      edit((s) => addCurveThrough(s, simplified))
+      onActiveCurve(setup.curves.length)
+      return
+    }
+
+    if (drag.moved) return
     const point = localPoint(event)
     if (!point) return
+    if (drag.kind === 'point') {
+      onSelectPoint?.(drag.id)
+      return
+    }
     const world = worldAt(point.x, point.y)
     if (!world || !world.every(Number.isFinite)) return
-    edit((s) => addFreePoint(s, activeCurve, activeSpan, world))
+    if (draw && tool === 'add' && curve) {
+      edit((s) => addFixPointAt(s, activeCurve, world))
+      return
+    }
+    if (draw && tool === 'move') {
+      const hit = hitControlPoint(point.x, point.y)
+      if (hit) onSelectPoint?.(hit.id)
+      return
+    }
+    if (sketch && spanCount > 0) edit((s) => addFreePoint(s, activeCurve, activeSpan, world))
   }
 
   const handleRemoveLast = useCallback(() => {
@@ -346,7 +509,7 @@ export function PoseEditor({
   }, [edit, activeCurve, activeSpan])
 
   useEffect(() => {
-    if (!sketch) return
+    if (!sketch && !draw) return
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
       const tag = target?.tagName
@@ -364,14 +527,14 @@ export function PoseEditor({
         onRedo()
         return
       }
-      if (key === 'backspace' || key === 'delete') {
+      if (sketch && (key === 'backspace' || key === 'delete')) {
         event.preventDefault()
         handleRemoveLast()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [sketch, handleRemoveLast, onUndo, onRedo])
+  }, [sketch, draw, handleRemoveLast, onUndo, onRedo])
 
   const zoomBy = (factor: number) =>
     setView((prev) => ({
@@ -382,7 +545,37 @@ export function PoseEditor({
   const resetView = () => setView({ zoom: 1, x: 0, y: 0 })
 
   return (
-    <div className={`pose-editor ${sketch ? 'pose-editor--sketch' : ''}`}>
+    <div className={`pose-editor ${sketch ? 'pose-editor--sketch' : ''} ${draw ? `pose-editor--draw pose-editor--${tool}` : ''}`}>
+      {draw ? (
+        <div className="pose-editor__tools">
+          <div className="chip-row" role="group" aria-label="Drawing tool">
+            {(
+              [
+                ['move', 'Move points'],
+                ['add', `Add points to curve ${activeCurve + 1}`],
+                ['sketch', 'Sketch a new curve'],
+              ] as [Tool, string][]
+            ).map(([id, text]) => (
+              <button
+                key={id}
+                type="button"
+                className={`chip ${tool === id ? 'is-active' : ''}`}
+                aria-pressed={tool === id}
+                onClick={() => setTool(id)}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+          <p className="pose-editor__hint">
+            {tool === 'move'
+              ? 'Drag a point to move it, tap it to edit its details below. Drag the background to pan.'
+              : tool === 'add'
+                ? 'Tap to add the next point to the highlighted curve.'
+                : 'Draw a rough line with your finger or mouse. It becomes a new curve through a few points you can adjust.'}
+          </p>
+        </div>
+      ) : null}
       {sketch ? (
         <div className="pose-editor__selectors">
           <div className="chip-row" role="tablist" aria-label="Curves">
@@ -425,19 +618,21 @@ export function PoseEditor({
         <canvas
           ref={canvasRef}
           role="img"
-          aria-label={sketch ? 'Sketch area: tap to place guide points' : 'Preview of your curves'}
+          aria-label={sketch ? 'Sketch area: tap to place guide points' : draw ? 'Drawing area' : 'Preview of your curves'}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={() => {
             dragRef.current = null
+            setStroke([])
+            setFrozenBounds(null)
           }}
           onPointerLeave={() => setGhost(null)}
         />
       </div>
 
       <div className="pose-editor__bar">
-        {sketch ? (
+        {sketch || draw ? (
           <div className="pose-editor__actions" role="group" aria-label="Edit history">
             <button type="button" className="btn btn--sm" data-action="undo" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={onUndo}>
               <UndoIcon /> Undo
@@ -445,7 +640,7 @@ export function PoseEditor({
             <button type="button" className="btn btn--sm" data-action="redo" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={onRedo}>
               <RedoIcon /> Redo
             </button>
-            <button
+            {sketch ? <button
               type="button"
               className="btn btn--sm"
               data-action="clear"
@@ -454,10 +649,10 @@ export function PoseEditor({
               onClick={() => edit((s) => clearSpan(s, activeCurve, activeSpan))}
             >
               <TrashIcon /> Clear guides{placed > 0 ? ` (${placed})` : ''}
-            </button>
+            </button> : null}
           </div>
         ) : (
-          <span className="pose-editor__caption">Preview · drag to pan, scroll to zoom</span>
+          <span className="pose-editor__caption">Preview only · drag to pan, scroll to zoom</span>
         )}
 
         <div className="pose-editor__zoom" role="group" aria-label="View zoom">

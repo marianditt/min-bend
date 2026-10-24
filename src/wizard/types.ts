@@ -1,6 +1,13 @@
+import type { PointId } from '../solver/types'
 import type { useSetupState } from '../hooks/useSetupState'
 
 export type SetupApi = ReturnType<typeof useSetupState>
+
+/** A point chosen on the canvas or from another step; `n` makes re-picking the same point count. */
+export interface PointSelection {
+  id: PointId
+  n: number
+}
 
 export type StepId = 'points' | 'rules' | 'sketch' | 'run' | 'result'
 
@@ -16,13 +23,13 @@ export const STEPS: StepInfo[] = [
     id: 'points',
     label: 'Points',
     title: 'Where must the curve go?',
-    help: 'Each curve passes through points you define. For every point choose where it sits and which way the curve points there.',
+    help: 'Draw on the picture or use the cards below: each point can be fixed, free, or follow another point’s position or direction.',
   },
   {
     id: 'rules',
     label: 'Rules',
     title: 'Add rules',
-    help: 'Optional. Fix how long a curve must be, or make one point copy the position or direction of another.',
+    help: 'Optional. Fix how long a curve must be, and review which points follow others. Links are edited on the point itself.',
   },
   {
     id: 'sketch',

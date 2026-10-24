@@ -16,7 +16,12 @@
 
 export type Vec2 = [number, number]
 
+/** Stable identity of a control point; unaffected by inserting or deleting other points. */
+export type PointId = string
+
 export interface FixPoint {
+  /** Unique within the setup. Constraints refer to points by this id, never by index. */
+  id: PointId
   /** Position; the fixed position, or the initial guess when `posFree`. */
   pos: Vec2
   /** Tangent direction at this point, or null when free. Normalized by the solver. */
@@ -51,25 +56,42 @@ export interface Curve {
 /** Default value of {@link Setup.resolution}. */
 export const DEFAULT_RESOLUTION = 1
 
-/** Addresses one control point: curve index and control point index. */
+/** Addresses one control point by position in the setup (derived from a {@link PointId}; never stored). */
 export interface PointRef {
   curve: number
   point: number
 }
 
+interface ConstraintBase {
+  /** The followed point (possibly on another curve). */
+  source: PointId
+  /** The point whose own input for this property is replaced. */
+  target: PointId
+}
+
+/** The target sits at the source's position plus `delta` (default [0, 0]). */
+export interface PositionConstraint extends ConstraintBase {
+  kind: 'position'
+  delta?: Vec2
+}
+
+/** The target's tangent is the source's tangent rotated counter-clockwise by `delta` degrees (default 0). */
+export interface OrientationConstraint extends ConstraintBase {
+  kind: 'orientation'
+  delta?: number
+}
+
 /**
  * Ties one property of the `target` control point to the `source` control
- * point (possibly on another curve). The target's own input for that property
- * is disabled; it takes the source's value.
- *  - position: a fixed source pins the target to the same place; if the source
- *    is free the solver keeps both points glued together.
- *  - orientation: the target copies the source's tangent.
+ * point, optionally with a fixed offset. The target's own input for that
+ * property is ignored.
+ *  - position: a fixed source pins the target; if the source is free the solver
+ *    keeps both points together at the offset.
+ *  - orientation: a fixed source gives the target a fixed tangent; if the
+ *    source's orientation is free, the solver keeps both tangents at the angular
+ *    offset and the forces of both curves act on the shared angle.
  */
-export interface Constraint {
-  kind: 'position' | 'orientation'
-  source: PointRef
-  target: PointRef
-}
+export type Constraint = PositionConstraint | OrientationConstraint
 
 /** The whole multi-curve setup authored by the user. */
 export interface Setup {

@@ -1,16 +1,15 @@
 import { DEFAULT_RESOLUTION, type Setup } from '../solver/types'
 
 /**
- * Default setup: a single curve with two oriented coincident fix points.
- * This reproduces the original single-chain problem exactly (start and
- * end at the origin, start tangent +y, end tangent -y).
+ * Default setup: a single curve running left to right between two fixed
+ * positions, with free directions.
  */
 export const DEFAULT_SETUP: Setup = {
   curves: [
     {
       fixPoints: [
-        { pos: [0, 0], orientation: [0, 1] },
-        { pos: [0, 0], orientation: [0, -1] },
+        { id: 'p1', pos: [0, 0], orientation: null },
+        { id: 'p2', pos: [4, 0], orientation: null },
       ],
       spans: [[]],
     },

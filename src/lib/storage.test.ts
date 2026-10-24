@@ -26,8 +26,8 @@ const validSetup: Setup = {
   curves: [
     {
       fixPoints: [
-        { pos: [0, 0], orientation: null },
-        { pos: [4, 0], orientation: [1, 0], posFree: true },
+        { id: 'p1', pos: [0, 0], orientation: null },
+        { id: 'p2', pos: [4, 0], orientation: [1, 0], posFree: true },
       ],
       spans: [[[1, 0.5]]],
       targetLength: 5,
@@ -153,5 +153,33 @@ describe('legacy constants', () => {
     expect(loaded?.constants.kBend).toBe(2)
     expect(loaded?.constants).not.toHaveProperty('kLen')
     expect(loaded?.constants.gamma).toBeGreaterThan(0)
+  })
+})
+
+describe('v2 -> v3 migration', () => {
+  it('gives points ids and rewrites index based constraints to ids', () => {
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k) })
+    const pt = (x: number) => ({ pos: [x, 0], orientation: null })
+    store.set(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        constants: DEFAULT_CONSTANTS,
+        setup: {
+          resolution: 1,
+          curves: [
+            { fixPoints: [pt(0), pt(1)], spans: [[]] },
+            { fixPoints: [pt(2), pt(3)], spans: [[]] },
+          ],
+          constraints: [{ kind: 'position', source: { curve: 0, point: 1 }, target: { curve: 1, point: 0 } }],
+        },
+      }),
+    )
+    const loaded = loadState()!
+    const ids = loaded.setup.curves.flatMap((c) => c.fixPoints.map((p) => p.id))
+    expect(new Set(ids).size).toBe(4)
+    expect(loaded.setup.constraints).toEqual([{ kind: 'position', source: ids[1], target: ids[2] }])
+    vi.unstubAllGlobals()
   })
 })
