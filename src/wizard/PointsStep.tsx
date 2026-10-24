@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
-import { constraintFor, locate, pointLabel } from '../solver/constraints'
-import type { Constraint, FixPoint, PointId, Setup, Vec2 } from '../solver/types'
+import { useMemo, useState } from 'react'
+import { constraintFor, locate } from '../solver/constraints'
+import { DEFAULT_FLATNESS, type Constraint, type FixPoint, type PointId, type Setup, type Vec2 } from '../solver/types'
+import { previewLayout } from '../solver/solve'
 import { NumberField } from '../ui/NumberField'
-import { PoseEditor } from '../ui/PoseEditor'
 import {
   addConstraint,
   addCurve,
@@ -13,11 +13,13 @@ import {
   removeCurve,
   removeFixPoint,
   setConstraintDelta,
+  setCurveFlatness,
+  setCurveTargetLength,
   setFixOrientation,
   setFixPosFree,
 } from '../ui/setupEdits'
 import { degreesToVector, vectorToDegrees } from './orientation'
-import type { PointSelection, SetupApi } from './types'
+import type { SetupApi } from './types'
 
 function pointRole(index: number, count: number): string {
   if (index === 0) return 'start'
@@ -25,36 +27,22 @@ function pointRole(index: number, count: number): string {
   return 'via'
 }
 
-const num = (v: number) => String(Math.round(v * 100) / 100)
-
-function describeFollow(setup: Setup, c: Constraint): string {
-  const from = pointLabel(setup, c.source)
-  if (c.kind === 'orientation') {
-    const delta = c.delta ?? 0
-    return delta === 0 ? `follows ${from}` : `follows ${from} turned by ${num(delta)}°`
-  }
-  const [dx, dy] = c.delta ?? [0, 0]
-  return dx === 0 && dy === 0 ? `follows ${from}` : `follows ${from} shifted by (${num(dx)}, ${num(dy)})`
-}
-
-/** Read-only state of a point, shown apart from the editing controls. */
-function describePoint(setup: Setup, fp: FixPoint): string {
-  const posRule = constraintFor(setup, 'position', fp.id)
-  const dirRule = constraintFor(setup, 'orientation', fp.id)
-  const pos = posRule
-    ? `Position ${describeFollow(setup, posRule)}`
-    : fp.posFree
-      ? `Any position (starts near ${num(fp.pos[0])}, ${num(fp.pos[1])})`
-      : `Fixed at (${num(fp.pos[0])}, ${num(fp.pos[1])})`
-  const dir = dirRule
-    ? `direction ${describeFollow(setup, dirRule)}`
-    : fp.orientation
-      ? `fixed direction ${num(vectorToDegrees(fp.orientation))}°`
-      : 'any direction'
-  return `${pos} · ${dir}`
+function polylineLength(pts: [number, number][]): number {
+  let total = 0
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+  return total
 }
 
 type Mode = 'fixed' | 'any' | 'follow'
+
+function modeOptions(noun: string, canFollow: boolean): { value: Mode; text: string }[] {
+  const all: { value: Mode; text: string }[] = [
+    { value: 'fixed', text: `Fix ${noun}` },
+    { value: 'any', text: `Any ${noun}` },
+    { value: 'follow', text: 'Follow a point' },
+  ]
+  return canFollow ? all : all.slice(0, 2)
+}
 
 function Choice({
   label,
@@ -107,21 +95,26 @@ function FollowEditor({
     setProblem(null)
     update(() => next)
   }
+  const own = locate(setup, constraint.target)?.curve
+  // A point follows one point only: its other property already decided which.
+  const decided = setup.constraints?.find((c) => c.target === constraint.target && c.kind !== constraint.kind)?.source
   return (
     <div className="wiz-follow">
       <label className="wiz-select">
         <span className="wiz-field__label">Follow which point?</span>
         <select value={constraint.source} aria-label={`${label}: follow which point`} onChange={(e) => onSource(e.target.value)}>
           {setup.curves.flatMap((c, ci) =>
-            c.fixPoints.flatMap((fp, pi) =>
-              fp.id === constraint.target
-                ? []
-                : [
-                    <option key={fp.id} value={fp.id}>
-                      Curve {ci + 1} · Point {pi + 1}
-                    </option>,
-                  ],
-            ),
+            ci === own
+              ? []
+              : c.fixPoints.flatMap((fp, pi) =>
+                  decided && fp.id !== decided
+                    ? []
+                    : [
+                        <option key={fp.id} value={fp.id}>
+                          Curve {ci + 1} · Point {pi + 1}
+                        </option>,
+                      ],
+                ),
           )}
         </select>
       </label>
@@ -163,20 +156,11 @@ function FollowEditor({
   )
 }
 
-export function PointsStep({
-  api,
-  selected,
-  onSelect,
-}: {
-  api: SetupApi
-  selected: PointSelection | null
-  onSelect: (id: PointId) => void
-}) {
+export function PointsStep({ api }: { api: SetupApi }) {
   const { setup, update } = api
-  const [activeCurve, setActiveCurve] = useState(0)
+  const layout = useMemo(() => previewLayout(setup), [setup])
   // Curves are collapsed by the id of their first point, which stays stable while editing.
   const [collapsed, setCollapsed] = useState<Set<PointId>>(new Set())
-  const active = Math.min(activeCurve, setup.curves.length - 1)
 
   const curveKey = (ci: number) => setup.curves[ci].fixPoints[0].id
   const toggle = (key: PointId) =>
@@ -185,27 +169,6 @@ export function PointsStep({
       if (!next.delete(key)) next.add(key)
       return next
     })
-
-  // Jump to a point picked on the canvas or from another step: open its curve and scroll to it.
-  useEffect(() => {
-    if (!selected) return
-    const ref = locate(setup, selected.id)
-    if (!ref) return
-    setActiveCurve(ref.curve)
-    const key = setup.curves[ref.curve].fixPoints[0].id
-    setCollapsed((prev) => {
-      if (!prev.has(key)) return prev
-      const next = new Set(prev)
-      next.delete(key)
-      return next
-    })
-    const frame = requestAnimationFrame(() =>
-      document.getElementById(`point-${selected.id}`)?.scrollIntoView?.({ block: 'center' }),
-    )
-    return () => cancelAnimationFrame(frame)
-    // Only a new selection should move the page, not every edit of the setup.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected])
 
   const setPosition = (fp: FixPoint, mode: Mode) =>
     update((s) => {
@@ -225,30 +188,17 @@ export function PointsStep({
       return setFixOrientation(cleared, ref.curve, ref.point, mode === 'fixed' ? (fp.orientation ?? degreesToVector(0)) : null)
     })
 
+  const canFollow = setup.curves.length > 1
+
   return (
     <div className="wiz-stack">
-      <section className="wiz-card wiz-card--preview" aria-label="Drawing area">
-        <PoseEditor
-          draw
-          setup={setup}
-          edit={update}
-          onUndo={api.undo}
-          onRedo={api.redo}
-          canUndo={api.canUndo}
-          canRedo={api.canRedo}
-          activeCurve={active}
-          onActiveCurve={setActiveCurve}
-          selectedPoint={selected?.id ?? null}
-          onSelectPoint={onSelect}
-        />
-      </section>
-
       {setup.curves.map((curve, ci) => {
         const key = curveKey(ci)
         const open = !collapsed.has(key)
         const links = (setup.constraints ?? []).filter((c) => curve.fixPoints.some((fp) => fp.id === c.target)).length
+        const fixed = typeof curve.targetLength === 'number'
         return (
-          <section key={key} className={`wiz-card ${ci === active ? 'is-active' : ''}`} aria-label={`Curve ${ci + 1}`}>
+          <section key={key} className="wiz-card" aria-label={`Curve ${ci + 1}`}>
             <header className="wiz-card__head">
               <button
                 type="button"
@@ -266,11 +216,6 @@ export function PointsStep({
                 </span>
               </button>
               <div className="wiz-row">
-                {ci !== active ? (
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setActiveCurve(ci)}>
-                    Highlight
-                  </button>
-                ) : null}
                 {setup.curves.length > 1 ? (
                   <button
                     type="button"
@@ -285,6 +230,54 @@ export function PointsStep({
 
             {open ? (
               <>
+                <div className="wiz-point">
+                  <div className="wiz-field">
+                    <span className="wiz-field__label">Length</span>
+                    <Choice
+                      label={`Length of curve ${ci + 1}`}
+                      value={fixed ? 'fixed' : 'any'}
+                      options={[
+                        { value: 'any', text: 'Free' },
+                        { value: 'fixed', text: 'Fixed length' },
+                      ]}
+                      onChange={(m) =>
+                        update((st) =>
+                          setCurveTargetLength(
+                            st,
+                            ci,
+                            m === 'any' ? null : Math.max(1, Math.round(polylineLength(layout.curves[ci] ?? []) * 10) / 10),
+                          ),
+                        )
+                      }
+                    />
+                    {fixed ? (
+                      <NumberField
+                        label="Length"
+                        value={curve.targetLength as number}
+                        step={1}
+                        min={0}
+                        onChange={(v) => update((st) => setCurveTargetLength(st, ci, v))}
+                      />
+                    ) : (
+                      <label className="wiz-slider">
+                        <span className="wiz-slider__ends">
+                          <span>Short</span>
+                          <span>Flat</span>
+                        </span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={curve.flatness ?? DEFAULT_FLATNESS}
+                          aria-label={`Prefer short or flat for curve ${ci + 1}`}
+                          onChange={(e) => update((st) => setCurveFlatness(st, ci, Number(e.target.value)), { history: false })}
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+
                 <ol className="wiz-points">
                   {curve.fixPoints.map((fp, pi) => {
                     const posRule = constraintFor(setup, 'position', fp.id)
@@ -296,7 +289,7 @@ export function PointsStep({
                       <li
                         key={fp.id}
                         id={`point-${fp.id}`}
-                        className={`wiz-point ${selected?.id === fp.id ? 'is-selected' : ''}`}
+                        className="wiz-point"
                       >
                         <div className="wiz-point__head">
                           <strong>
@@ -313,22 +306,13 @@ export function PointsStep({
                             </button>
                           ) : null}
                         </div>
-                        <p className="wiz-state">
-                          <span className="wiz-state__tag">Now</span>
-                          {describePoint(setup, fp)}
-                        </p>
-
                         <div className="wiz-editor">
                           <div className="wiz-field">
                             <span className="wiz-field__label">Position</span>
                             <Choice
                               label={`Position of point ${pi + 1}`}
                               value={posMode}
-                              options={[
-                                { value: 'fixed', text: 'Fix position' },
-                                { value: 'any', text: 'Any position' },
-                                { value: 'follow', text: 'Follow a point' },
-                              ]}
+                              options={modeOptions('position', canFollow)}
                               onChange={(m) => setPosition(fp, m)}
                             />
                             {posRule ? (
@@ -356,11 +340,7 @@ export function PointsStep({
                             <Choice
                               label={`Direction of point ${pi + 1}`}
                               value={dirMode}
-                              options={[
-                                { value: 'fixed', text: 'Fix direction' },
-                                { value: 'any', text: 'Any direction' },
-                                { value: 'follow', text: 'Follow a point' },
-                              ]}
+                              options={modeOptions('direction', canFollow)}
                               onChange={(m) => setDirection(fp, m)}
                             />
                             {dirRule ? (
@@ -394,11 +374,9 @@ export function PointsStep({
         type="button"
         className="btn btn--block"
         onClick={() => {
-          const created = setup.curves.length
           // Fold the other curves away so the new one is the one being edited.
           setCollapsed(new Set(setup.curves.map((_, i) => curveKey(i))))
           update(addCurve)
-          setActiveCurve(created)
         }}
       >
         + Add another curve

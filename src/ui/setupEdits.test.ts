@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Setup } from '../solver/types'
-import { setFixPosFree, setResolution, toggleCurveHidden } from './setupEdits'
+import { addConstraint, addFixPoint, followPoint, removeFixPoint, setFixPosFree, setResolution, toggleCurveHidden } from './setupEdits'
+import { locate } from '../solver/constraints'
 
 const base = (): Setup => ({
   resolution: 1,
@@ -49,53 +50,72 @@ describe('setResolution', () => {
   })
 })
 
-import { addConstraint, addFixPoint, followPoint, removeFixPoint } from './setupEdits'
-import { simplifyStroke } from './sketch'
-import { locate } from '../solver/constraints'
+
+/** Curve A (p1, p2, p3) above curve B (p4, p5, p6). */
+const twoCurves = (): Setup => {
+  const pts = (ids: string[], y: number) => ids.map((id, i) => ({ id, pos: [i, y] as [number, number], orientation: null }))
+  return {
+    resolution: 1,
+    curves: [
+      { fixPoints: pts(['p1', 'p2', 'p3'], 0), spans: [[], []] },
+      { fixPoints: pts(['p4', 'p5', 'p6'], -2), spans: [[], []] },
+    ],
+  }
+}
 
 describe('stable point ids', () => {
-  const three = (): Setup => {
-    const s = addFixPoint(base(), 0)
-    return s
-  }
-
   it('keeps constraints attached to their points when an earlier point is deleted', () => {
-    let s = three()
-    const [a, , c] = s.curves[0].fixPoints.map((p) => p.id)
-    s = addConstraint(s, { kind: 'orientation', source: a, target: c, delta: 10 })
-    s = removeFixPoint(s, 0, 1)
-    expect(s.constraints).toEqual([{ kind: 'orientation', source: a, target: c, delta: 10 }])
-    expect(locate(s, c)).toEqual({ curve: 0, point: 1 })
+    let s = addConstraint(twoCurves(), { kind: 'orientation', source: 'p1', target: 'p6', delta: 10 })
+    s = removeFixPoint(s, 1, 1)
+    expect(s.constraints).toEqual([{ kind: 'orientation', source: 'p1', target: 'p6', delta: 10 }])
+    expect(locate(s, 'p6')).toEqual({ curve: 1, point: 1 })
   })
 
   it('deletes constraints whose point is deleted', () => {
-    let s = three()
-    const [a, b, c] = s.curves[0].fixPoints.map((p) => p.id)
-    s = addConstraint(s, { kind: 'position', source: a, target: c })
-    s = addConstraint(s, { kind: 'orientation', source: b, target: a })
-    s = removeFixPoint(s, 0, 2)
-    expect(s.constraints).toEqual([{ kind: 'orientation', source: b, target: a }])
-    expect(new Set(s.curves[0].fixPoints.map((p) => p.id)).size).toBe(2)
+    let s = addConstraint(twoCurves(), { kind: 'position', source: 'p1', target: 'p6' })
+    s = addConstraint(s, { kind: 'orientation', source: 'p2', target: 'p4' })
+    s = removeFixPoint(s, 1, 2)
+    expect(s.constraints).toEqual([{ kind: 'orientation', source: 'p2', target: 'p4' }])
   })
 
   it('never reuses the id of a deleted point', () => {
-    let s = removeFixPoint(three(), 0, 2)
+    let s = removeFixPoint(addFixPoint(base(), 0), 0, 2)
     s = addFixPoint(s, 0)
     expect(new Set(s.curves[0].fixPoints.map((p) => p.id)).size).toBe(3)
   })
-
-  it('followPoint links to a neighbour', () => {
-    const s = followPoint(three(), 'orientation', 'p2')
-    expect(s.constraints?.[0]).toMatchObject({ kind: 'orientation', target: 'p2', source: 'p1' })
-  })
 })
 
-describe('simplifyStroke', () => {
-  it('reduces a straight noisy stroke to its ends', () => {
-    const stroke: [number, number][] = Array.from({ length: 20 }, (_, i) => [i, (i % 2) * 0.1])
-    expect(simplifyStroke(stroke, 1)).toHaveLength(2)
+describe('follow rules', () => {
+  it('refuses a source on the same curve', () => {
+    const s = twoCurves()
+    expect(addConstraint(s, { kind: 'position', source: 'p1', target: 'p2' })).toBe(s)
   })
-  it('keeps a corner', () => {
-    expect(simplifyStroke([[0, 0], [5, 0], [10, 0], [10, 5], [10, 10]], 0.5)).toEqual([[0, 0], [10, 0], [10, 10]])
+
+  it('refuses a second, different source for the same point', () => {
+    const s = addConstraint(twoCurves(), { kind: 'position', source: 'p1', target: 'p4' })
+    expect(addConstraint(s, { kind: 'orientation', source: 'p2', target: 'p4' })).toBe(s)
+    expect(addConstraint(s, { kind: 'orientation', source: 'p1', target: 'p4' })).not.toBe(s)
+  })
+
+  it('direction follows the point the position follows', () => {
+    const s = addConstraint(twoCurves(), { kind: 'position', source: 'p2', target: 'p5' })
+    const next = followPoint(s, 'orientation', 'p5')
+    expect(next.constraints).toContainEqual({ kind: 'orientation', source: 'p2', target: 'p5' })
+  })
+
+  it('continues along the same other curve as the previous point', () => {
+    const s = addConstraint(twoCurves(), { kind: 'position', source: 'p1', target: 'p4' })
+    const next = followPoint(s, 'position', 'p5')
+    expect(next.constraints).toContainEqual({ kind: 'position', source: 'p2', target: 'p5' })
+  })
+
+  it('picks a point of another curve when nothing else hints', () => {
+    const next = followPoint(twoCurves(), 'orientation', 'p5')
+    expect(locate(next, next.constraints![0].source)?.curve).toBe(0)
+  })
+
+  it('does nothing with a single curve', () => {
+    const s = base()
+    expect(followPoint(s, 'position', 'p2')).toBe(s)
   })
 })

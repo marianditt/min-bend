@@ -30,11 +30,9 @@ const LIVE_URL = process.env.QA_LIVE_URL || 'https://marianditt.github.io/min-be
     console.log('http status:', resp.status())
     await page.waitForSelector('h1.wiz__title', { timeout: 15000 })
     console.log('title:', (await page.textContent('h1.wiz__title')).trim())
-    console.log('editor visible:', await page.isVisible('.pose-editor'))
 
-    // Rules: a loop needs a fixed length, then solve.
-    await page.getByRole('button', { name: /Next: Rules/ }).click()
-    await page.getByRole('button', { name: 'Fixed length' }).click()
+    // A loop needs a fixed length, then solve.
+    await page.getByRole('button', { name: 'Fixed length' }).first().click()
     await page.getByRole('button', { name: /Next: Sketch/ }).click()
     await page.getByRole('button', { name: /Review & solve/ }).click()
     await page.locator('.btn--lg').click()

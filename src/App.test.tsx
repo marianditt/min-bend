@@ -18,8 +18,6 @@ describe('wizard', () => {
   it('walks through the steps without crashing and keeps Result locked until a run exists', () => {
     render(<App />)
     expect(screen.getByText('Where must the curve go?')).toBeTruthy()
-    fireEvent.click(screen.getByText(/Next: Rules/))
-    expect(screen.getByText('Add rules')).toBeTruthy()
     fireEvent.click(screen.getByText(/Next: Sketch/))
     expect(screen.getByText('Sketch a rough route')).toBeTruthy()
     fireEvent.click(screen.getByText(/Review & solve/))
@@ -30,7 +28,6 @@ describe('wizard', () => {
 
   it('blocks Solve and points to the problem when the setup is invalid', () => {
     render(<App />)
-    fireEvent.click(screen.getByText(/Next: Rules/))
     fireEvent.click(screen.getByText(/Next: Sketch/))
     fireEvent.click(screen.getByText(/Review & solve/))
     const solve = screen.getByText('Solve', { selector: '.btn--lg' }) as HTMLButtonElement

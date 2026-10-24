@@ -111,6 +111,7 @@ function sanitizeCurve(value: unknown): Curve | null {
   const curve: Curve = { fixPoints, spans }
   if (value.targetLength === null) curve.targetLength = null
   else if (isFiniteNumber(value.targetLength)) curve.targetLength = value.targetLength
+  if (isFiniteNumber(value.flatness) && value.flatness >= 0 && value.flatness <= 1) curve.flatness = value.flatness
   if (value.hidden === true) curve.hidden = true
   return curve
 }

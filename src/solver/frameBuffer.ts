@@ -7,6 +7,9 @@ import type { Frame } from './types'
  */
 export const MAX_STORED_FRAMES = 20000
 
+/** Soft cap on the points held across all buffered frames; keeps long runs on big curves in memory. */
+export const MAX_BUFFERED_POINTS = 2_000_000
+
 export interface FrameBuffer {
   /**
    * Record a frame. Frames must arrive with strictly increasing `i`, starting
@@ -32,14 +35,23 @@ export function createFrameBuffer(maxFrames: number = MAX_STORED_FRAMES): FrameB
 
   const frames: Frame[] = []
   let stride = 1
+  let points = 0
+  const weight = (f: Frame): number => f.curves.reduce((n, c) => n + c.length, 0)
 
   return {
     add(frame: Frame): void {
-      if (frame.i % stride === 0) frames.push(frame)
+      if (frame.i % stride === 0) {
+        frames.push(frame)
+        points += weight(frame)
+      }
 
-      if (frames.length > 2 * maxFrames) {
+      if (frames.length > 2 * maxFrames || (points > MAX_BUFFERED_POINTS && frames.length > 4)) {
         let w = 0
-        for (let r = 0; r < frames.length; r += 2) frames[w++] = frames[r]
+        points = 0
+        for (let r = 0; r < frames.length; r += 2) {
+          frames[w++] = frames[r]
+          points += weight(frames[r])
+        }
         frames.length = w
         stride *= 2
       }

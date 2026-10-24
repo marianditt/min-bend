@@ -46,12 +46,21 @@ export interface Curve {
    */
   targetLength?: number | null
   /**
+   * Only used while the length is free: how the curve trades shortness against
+   * flatness, from 0 (as short as possible) to 1 (as flat as possible).
+   * Absent = {@link DEFAULT_FLATNESS}.
+   */
+  flatness?: number
+  /**
    * Display-only visibility flag. A hidden curve still participates in the
    * simulation and stays in the result; the player and its plots simply skip
    * drawing it and omit it from the curve selector.
    */
   hidden?: boolean
 }
+
+/** Default value of {@link Curve.flatness}: shortness and flatness weigh equally. */
+export const DEFAULT_FLATNESS = 0.5
 
 /** Default value of {@link Setup.resolution}. */
 export const DEFAULT_RESOLUTION = 1
@@ -106,7 +115,11 @@ export interface Setup {
 export interface PhysicsConstants {
   /** Bend-minimization force stiffness. */
   kBend: number
-  /** Friction coefficient (force = -gamma * v). */
+  /**
+   * Energy drain: each step removes a fraction `gamma * h` of the velocity, so
+   * the total (kinetic + potential) energy keeps falling. The solver never lets
+   * that total energy rise.
+   */
   gamma: number
   /** Integration step size. */
   h: number
@@ -139,6 +152,8 @@ export interface Frame {
   i: number
   /** Kinetic energy at this frame. */
   ke: number
+  /** Total (kinetic + potential) energy at this frame; never higher than in the previous frame unless points were added or removed. */
+  energy?: number
   /** Per-curve point polylines (fix points + interior points), in curve order. */
   curves: Vec2[][]
   /**
