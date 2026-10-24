@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { Setup, Vec2 } from '../solver/types'
 import { previewPose } from '../solver/solve'
-import { fixIndices, freeSlotIndices } from '../solver/curve'
+import { planCurve } from '../solver/curve'
 import {
   type Theme,
   LIGHT_THEME,
@@ -12,6 +12,8 @@ import {
   drawGrid,
   drawAxes,
   drawArrow,
+  drawControlPoint,
+  drawInteriorPoint,
   usePrefersDark,
 } from '../player/canvasKit'
 import type { Bounds } from '../player/canvasKit'
@@ -87,6 +89,7 @@ function drawScene(
     const pts = preview[ci]
     if (!pts || pts.length < 2) return
     const screen = screenPoints(pts, project)
+    const ctrl = planCurve(curve, setup.resolution).controlIndices
     const isActive = ci === activeCurve
 
     ctx.save()
@@ -102,7 +105,7 @@ function drawScene(
     ctx.stroke()
 
     if (isActive) {
-      const fix = fixIndices(curve)
+      const fix = ctrl
       const from = fix[activeSpan]
       const to = fix[activeSpan + 1]
       if (from !== undefined && to !== undefined) {
@@ -122,7 +125,7 @@ function drawScene(
       if (!fp.orientation) return
       const len = Math.hypot(fp.orientation[0], fp.orientation[1])
       if (len < 1e-9) return
-      const p = screen[fixIndices(curve)[pi]]
+      const p = screen[ctrl[pi]]
       if (!p) return
       const ex = project.toX(fp.pos[0] + (fp.orientation[0] / len) * 1e6)
       const ey = project.toY(fp.pos[1] + (fp.orientation[1] / len) * 1e6)
@@ -135,7 +138,7 @@ function drawScene(
 
     curve.fixPoints.forEach((fp, pi) => {
       if (!fp.orientation) return
-      const p = screen[fixIndices(curve)[pi]]
+      const p = screen[ctrl[pi]]
       if (!p) return
       const len = Math.hypot(fp.orientation[0], fp.orientation[1])
       if (len < 1e-9) return
@@ -144,73 +147,13 @@ function drawScene(
       drawArrow(ctx, p[0], p[1], p[0] + ux * 30, p[1] - uy * 30, theme.orient)
     })
 
-    const slotsFor = (si: number) => freeSlotIndices(curve, si)
-    const starts = fixIndices(curve)
-
-    ctx.fillStyle = theme.point
-    ctx.strokeStyle = theme.pointRing
-    ctx.lineWidth = 1.6
-    curve.spans.forEach((span, si) => {
-      const slots = slotsFor(si)
-      span.forEach((_, fi) => {
-        const idx = starts[si] + (slots[fi] ?? 0)
-        const p = screen[idx]
-        if (!p) return
-        ctx.beginPath()
-        ctx.arc(p[0], p[1], 4.4, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.stroke()
-      })
+    const isControl = new Set(ctrl)
+    screen.forEach((p, i) => {
+      if (!isControl.has(i)) drawInteriorPoint(ctx, p[0], p[1], theme)
     })
-
-    ctx.save()
-    ctx.globalAlpha *= 0.5
-    ctx.strokeStyle = theme.point
-    ctx.fillStyle = theme.pointRing
-    ctx.lineWidth = 1.3
-    ctx.setLineDash([3, 3])
-    const n = Math.max(0, Math.floor(curve.n))
     curve.fixPoints.forEach((fp, pi) => {
-      const next = curve.fixPoints[pi + 1]
-      if (n >= 1 && fp.orientation) {
-        const p = screen[starts[pi] + 1]
-        if (p) {
-          ctx.beginPath()
-          ctx.arc(p[0], p[1], 3.4, 0, Math.PI * 2)
-          ctx.fill()
-          ctx.stroke()
-        }
-      }
-      if (n >= 1 && next?.orientation) {
-        const p = screen[starts[pi] + n]
-        if (p) {
-          ctx.beginPath()
-          ctx.arc(p[0], p[1], 3.4, 0, Math.PI * 2)
-          ctx.fill()
-          ctx.stroke()
-        }
-      }
-    })
-    ctx.setLineDash([])
-    ctx.restore()
-
-    const drawEndpoint = (p: [number, number], color: string) => {
-      const size = 12
-      ctx.fillStyle = color
-      ctx.strokeStyle = theme.pointRing
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.rect(p[0] - size / 2, p[1] - size / 2, size, size)
-      ctx.fill()
-      ctx.stroke()
-    }
-    const lastPi = curve.fixPoints.length - 1
-    curve.fixPoints.forEach((_, pi) => {
-      const p = screen[fixIndices(curve)[pi]]
-      if (!p) return
-      if (pi === 0) drawEndpoint(p, theme.start)
-      else if (pi === lastPi) drawEndpoint(p, theme.end)
-      else drawEndpoint(p, theme.orient)
+      const p = screen[ctrl[pi]]
+      if (p) drawControlPoint(ctx, p[0], p[1], fp.posFree === true, theme)
     })
 
     ctx.restore()
@@ -276,10 +219,7 @@ export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: Po
   const preview = useMemo(() => previewPose(setup), [setup])
   const bounds = useMemo(() => computePtsBounds(preview.flat()), [preview])
 
-  const slots = curve ? freeSlotIndices(curve, activeSpan) : []
   const placed = curve?.spans[activeSpan]?.length ?? 0
-  const capacity = slots.length
-  const canPlace = placed < capacity
 
   useEffect(() => {
     const container = containerRef.current
@@ -376,7 +316,6 @@ export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: Po
 
   const handleClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
     if (dragRef.current?.moved) return
-    if (!canPlace) return
     const point = localPoint(event)
     if (!point) return
     const world = worldAt(point.x, point.y)
@@ -428,12 +367,12 @@ export function PoseEditor({ setup, edit, onUndo, onRedo, canUndo, canRedo }: Po
       <div className="pose-editor__head">
         <h2 className="pose-editor__title">Design the curves</h2>
         <span className="pose-editor__counter">
-          span {activeSpan + 1}: {placed} / {capacity} free points
+          span {activeSpan + 1}: {placed} guide points
         </span>
       </div>
       <p className="pose-editor__hint">
-        Click to place free interior points in the active span; drag to pan, scroll to zoom. Bound points
-        (dashed) follow a fix point&apos;s orientation and are not editable.
+        Click to place guide points that shape the initial layout of the active span; drag to pan, scroll to
+        zoom. The number of line segments follows from the resolution.
       </p>
 
       <div className="pose-editor__selectors">

@@ -11,9 +11,17 @@ export interface Theme {
   chain: string
   point: string
   pointRing: string
-  start: string
-  end: string
   orient: string
+  /** Control point with a fixed position. */
+  controlFixed: string
+  /** Control point whose position the optimizer may change. */
+  controlFree: string
+  /** Outline that keeps light discs visible on the background. */
+  controlRing: string
+  /** Interior (free) points. */
+  interior: string
+  /** Tangent probe marker. */
+  probe: string
 }
 
 export const LIGHT_THEME: Theme = {
@@ -23,9 +31,12 @@ export const LIGHT_THEME: Theme = {
   chain: '#1f2530',
   point: '#3563e9',
   pointRing: 'rgba(255, 255, 255, 0.95)',
-  start: '#128a43',
-  end: '#cf2e2e',
   orient: '#b45309',
+  controlFixed: '#ffffff',
+  controlFree: '#9ca3af',
+  controlRing: '#1f2530',
+  interior: '#3563e9',
+  probe: '#c026d3',
 }
 
 export const DARK_THEME: Theme = {
@@ -35,9 +46,12 @@ export const DARK_THEME: Theme = {
   chain: '#e6e9ef',
   point: '#7aa2ff',
   pointRing: 'rgba(11, 13, 17, 0.95)',
-  start: '#4ade80',
-  end: '#f87272',
   orient: '#fbbf24',
+  controlFixed: '#ffffff',
+  controlFree: '#6b7280',
+  controlRing: '#e6e9ef',
+  interior: '#7aa2ff',
+  probe: '#e879f9',
 }
 
 const LIGHT_CURVES = ['#3563e9', '#128a43', '#cf2e2e', '#b45309', '#7c3aed', '#0891b2']
@@ -198,6 +212,92 @@ export function drawArrow(
   ctx.lineTo(tipX - ux * head + uy * head * 0.55, tipY - uy * head - ux * head * 0.55)
   ctx.closePath()
   ctx.fill()
+}
+
+/** Control point: white disc when its position is fixed, gray when the optimizer may move it. */
+export function drawControlPoint(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  posFree: boolean,
+  theme: Theme,
+) {
+  ctx.fillStyle = posFree ? theme.controlFree : theme.controlFixed
+  ctx.strokeStyle = theme.controlRing
+  ctx.lineWidth = 1.8
+  ctx.beginPath()
+  ctx.arc(x, y, 6, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+}
+
+/** Interior point: small blue disc. */
+export function drawInteriorPoint(ctx: CanvasRenderingContext2D, x: number, y: number, theme: Theme) {
+  ctx.fillStyle = theme.interior
+  ctx.strokeStyle = theme.pointRing
+  ctx.lineWidth = 1.2
+  ctx.beginPath()
+  ctx.arc(x, y, 3, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+}
+
+export interface CurveProbe {
+  /** Curve index. */
+  curve: number
+  /** Segment index within the curve. */
+  segment: number
+  /** Position along the segment, 0..1. */
+  t: number
+}
+
+export interface ProbeReading {
+  point: Vec2
+  /** Unit tangent along the curve direction (start to end). */
+  tangent: Vec2
+  /** Tangent angle in degrees, counter-clockwise from +x. */
+  angleDeg: number
+}
+
+/** Closest point on any of the given polylines to `target`, in the same coordinates. */
+export function closestOnCurves(curves: (Vec2[] | null)[], target: Vec2): CurveProbe | null {
+  let best: CurveProbe | null = null
+  let bestDist = Infinity
+  curves.forEach((pts, ci) => {
+    if (!pts) return
+    for (let k = 0; k + 1 < pts.length; k++) {
+      const dx = pts[k + 1][0] - pts[k][0]
+      const dy = pts[k + 1][1] - pts[k][1]
+      const len2 = dx * dx + dy * dy
+      if (len2 < 1e-18) continue
+      const t = Math.min(
+        Math.max(((target[0] - pts[k][0]) * dx + (target[1] - pts[k][1]) * dy) / len2, 0),
+        1,
+      )
+      const dist = Math.hypot(pts[k][0] + t * dx - target[0], pts[k][1] + t * dy - target[1])
+      if (dist < bestDist) {
+        bestDist = dist
+        best = { curve: ci, segment: k, t }
+      }
+    }
+  })
+  return best
+}
+
+/** Point and tangent of a probe on the given polyline (the tangent of the probed segment). */
+export function readProbe(pts: Vec2[] | undefined, probe: CurveProbe): ProbeReading | null {
+  const a = pts?.[probe.segment]
+  const b = pts?.[probe.segment + 1]
+  if (!a || !b) return null
+  const dx = b[0] - a[0]
+  const dy = b[1] - a[1]
+  const len = Math.hypot(dx, dy)
+  if (len < 1e-12) return null
+  return {
+    point: [a[0] + probe.t * dx, a[1] + probe.t * dy],
+    tangent: [dx / len, dy / len],
+    angleDeg: (Math.atan2(dy, dx) * 180) / Math.PI,
+  }
 }
 
 export function usePrefersDark(): boolean {

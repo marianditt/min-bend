@@ -59,7 +59,7 @@ function check(name, cond, extra = '') {
     check('Setup editor visible', await page.isVisible('.pose-editor'))
 
     check('Editor: span 1 has 4 free slots', (await counter()) === 'span 1: 0 / 4 free points', await counter())
-    check('Default n = 6', (await fieldInput('Interior points per span').inputValue()) === '6')
+    check('Default resolution = 1', (await fieldInput('Resolution (line length)').inputValue()) === '1')
     check('Two fix points present', (await page.locator('.fix-item').count()) === 2)
     check('Fix point 1 is the start', (await page.locator('.fix-item').first().textContent()).includes('Fix point 1'))
     check('Both orientations on by default', (await page.locator('.fix-item .switch input:checked').count()) === 2)
@@ -340,39 +340,6 @@ function check(name, cond, extra = '') {
     check('Hide: hidden flag persisted', storedHidden?.setup?.curves?.[1]?.hidden === true)
     await page.screenshot({ path: shot('qa-9-hidden.png') })
 
-    // --- Create a new curve from the solved frame (R3) ---
-    const fromFrameBtn = page.locator('button:has-text("Curve from frame")')
-    check('Create-from-frame: button present in player', (await fromFrameBtn.count()) === 1)
-    await fromFrameBtn.click()
-    await page.waitForSelector('.pose-editor')
-    check('Create-from-frame: returns to the editor', await page.isVisible('.pose-editor'))
-    check('Create-from-frame: appended a curve', (await page.locator('.curve-card').count()) === 3)
-    const srcN = Number(
-      await page
-        .locator('.curve-card')
-        .first()
-        .locator('.field', { hasText: 'Interior points per span' })
-        .locator('input')
-        .first()
-        .inputValue(),
-    )
-    const srcFix = await page.locator('.curve-card').first().locator('.fix-item').count()
-    const expectedPts = (srcFix - 1) * (srcN + 1) + 1
-    const newCard = page.locator('.curve-card').nth(2)
-    const newN = await newCard
-      .locator('.field', { hasText: 'Interior points per span' })
-      .locator('input')
-      .first()
-      .inputValue()
-    const newFix = await newCard.locator('.fix-item').count()
-    check('Create-from-frame: new curve is fully fixed (n = 0)', newN === '0', `n=${newN}`)
-    check(
-      'Create-from-frame: fix points equal the copied polyline length',
-      newFix === expectedPts,
-      `new=${newFix} expected=${expectedPts}`,
-    )
-    await page.screenshot({ path: shot('qa-9-fromframe.png') })
-
     // --- Slow compute -> cancel ---
     await page.locator('button:has-text("Advanced constants")').click()
     const settleInput = page.getByRole('textbox', { name: 'Settle frames' })
@@ -424,7 +391,7 @@ function check(name, cond, extra = '') {
     await page.locator('.sidebar__section-actions button:has-text("Reset")').click()
     await page.waitForTimeout(150)
     check('Reset: back to a single default curve', (await page.locator('.curve-card').count()) === 1)
-    check('Reset: default n = 6', (await fieldInput('Interior points per span').inputValue()) === '6')
+    check('Reset: default resolution = 1', (await fieldInput('Resolution (line length)').inputValue()) === '1')
     const storedAfterReset = await page.evaluate(() => {
       const raw = localStorage.getItem('min-bend:state')
       return raw ? JSON.parse(raw) : null

@@ -1,4 +1,5 @@
 import { EPS_STABILIZE, type Setup } from './types'
+import { MAX_SEGMENTS_PER_SPAN, planSpan } from './curve'
 
 /** A single, field-targeted validation problem. */
 export interface ValidationIssue {
@@ -24,7 +25,7 @@ function isNonZeroVec(v: [number, number]): boolean {
  * solvable. Rules (fixed stabilization threshold EPS_STABILIZE = 1e-3):
  *  - at least one curve
  *  - each curve has at least 2 fix points
- *  - each curve's `n` is an integer >= 0
+ *  - the global resolution is a positive number that keeps spans manageable
  *  - all fix point positions are finite
  *  - orientations, when present, are finite non-zero vectors
  *  - all user free points are finite [x, y] pairs
@@ -38,12 +39,13 @@ export function validateSetup(setup: Setup): ValidationIssue[] {
     return issues
   }
 
+  const resolutionOk = Number.isFinite(setup.resolution) && setup.resolution > 0
+  if (!resolutionOk) {
+    issues.push({ field: 'resolution', message: 'Resolution (line length) must be a positive number.' })
+  }
+
   curves.forEach((curve, ci) => {
     const label = `Curve ${ci + 1}`
-
-    if (!Number.isInteger(curve.n) || curve.n < 0) {
-      issues.push({ field: `n:${ci}`, message: `${label}: interior points must be an integer ≥ 0.` })
-    }
 
     const target = curve.targetLength
     if (target !== null && target !== undefined && (!Number.isFinite(target) || target <= 0)) {
@@ -80,6 +82,18 @@ export function validateSetup(setup: Setup): ValidationIssue[] {
         }
       }
     })
+
+    if (resolutionOk && curve.fixPoints.every((fp) => isFiniteVec(fp.pos) && (!fp.orientation || isFiniteVec(fp.orientation)))) {
+      for (let si = 0; si + 1 < curve.fixPoints.length; si++) {
+        if (planSpan(curve, si, setup.resolution).overflow) {
+          issues.push({
+            field: 'resolution',
+            message: `${label}, span ${si + 1}: resolution is too small (more than ${MAX_SEGMENTS_PER_SPAN} lines).`,
+          })
+          break
+        }
+      }
+    }
 
     if (Array.isArray(curve.spans)) {
       curve.spans.forEach((spanFree, si) => {

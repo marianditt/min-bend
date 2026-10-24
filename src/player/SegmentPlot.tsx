@@ -27,26 +27,37 @@ const MIN_VEC = 1e-6
 const PAD = { left: 10, right: 10, top: 16, bottom: 14 }
 
 interface FrameProfile {
+  /** Length of segment k, plotted at x = k + 0.5 (in point-index units). */
   lengths: number[]
-  bends: number[]
+  /**
+   * Turn angle (degrees) at point k, plotted at x = k, for k = 0..segments.
+   * Interior points use the angle between the adjacent segments. An end point
+   * with a fixed orientation uses the angle between that orientation and its
+   * only segment; a free end has no defined angle (null).
+   */
+  bends: (number | null)[]
 }
 
-/**
- * Per-segment length and absolute turn angle (degrees). bend[0] has no
- * predecessor segment and is defined as 0; degenerate vectors contribute 0.
- */
-function analyzeFrame(pts: Vec2[]): FrameProfile {
+function angleBetween(a: Vec2, b: Vec2): number | null {
+  if (Math.hypot(a[0], a[1]) < MIN_VEC || Math.hypot(b[0], b[1]) < MIN_VEC) return null
+  return Math.abs(Math.atan2(a[0] * b[1] - a[1] * b[0], a[0] * b[0] + a[1] * b[1])) * (180 / Math.PI)
+}
+
+function analyzeFrame(pts: Vec2[], startDir: Vec2 | null, endDir: Vec2 | null): FrameProfile {
   const { segments, lengths } = computeSegments(pts)
-  const bends = new Array<number>(segments.length).fill(0)
-  for (let k = 1; k < segments.length; k += 1) {
-    const a = segments[k - 1]
-    const b = segments[k]
-    if (Math.hypot(a[0], a[1]) < MIN_VEC || Math.hypot(b[0], b[1]) < MIN_VEC) continue
-    const cross = a[0] * b[1] - a[1] * b[0]
-    const dot = a[0] * b[0] + a[1] * b[1]
-    bends[k] = Math.abs(Math.atan2(cross, dot)) * (180 / Math.PI)
+  const bends: (number | null)[] = new Array(segments.length + 1).fill(null)
+  for (let k = 1; k < segments.length; k += 1) bends[k] = angleBetween(segments[k - 1], segments[k])
+  if (segments.length > 0) {
+    if (startDir) bends[0] = angleBetween(startDir, segments[0])
+    if (endDir) bends[segments.length] = angleBetween(segments[segments.length - 1], endDir)
   }
   return { lengths, bends }
+}
+
+/** Fixed orientations at the two ends of a curve (null when free). */
+function endDirections(frameSet: FrameSet, curveIndex: number): [Vec2 | null, Vec2 | null] {
+  const fixPoints = frameSet.meta.input?.curves?.[curveIndex]?.fixPoints ?? []
+  return [fixPoints[0]?.orientation ?? null, fixPoints[fixPoints.length - 1]?.orientation ?? null]
 }
 
 interface SeriesMaxima {
@@ -65,7 +76,7 @@ interface FrameAggregates {
  * so they are always scanned; the tail is strided to bound cost on long runs
  * (sampling is safe because length/bend vary smoothly after startup).
  */
-function scanMaxima(frames: Frame[], curveIndex: number): SeriesMaxima {
+function scanMaxima(frames: Frame[], curveIndex: number, dirs: [Vec2 | null, Vec2 | null]): SeriesMaxima {
   const maxima: SeriesMaxima = { length: 0, bend: 0 }
   const total = frames.length
   if (total === 0) return maxima
@@ -73,9 +84,9 @@ function scanMaxima(frames: Frame[], curveIndex: number): SeriesMaxima {
   const stride = Math.max(1, Math.ceil((total - head) / 1500))
   for (let i = 0; i < total; i += 1) {
     if (i >= head && (i - head) % stride !== 0) continue
-    const { lengths, bends } = analyzeFrame(frames[i].curves[curveIndex] ?? [])
+    const { lengths, bends } = analyzeFrame(frames[i].curves[curveIndex] ?? [], dirs[0], dirs[1])
     for (const value of lengths) if (value > maxima.length) maxima.length = value
-    for (const value of bends) if (value > maxima.bend) maxima.bend = value
+    for (const value of bends) if (value !== null && value > maxima.bend) maxima.bend = value
   }
   return maxima
 }
@@ -140,6 +151,7 @@ function draw(
   frameIndex: number,
   curveIndex: number,
   maxima: SeriesMaxima,
+  dirs: [Vec2 | null, Vec2 | null],
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
@@ -171,49 +183,54 @@ function draw(
   const pts = frames[frameIndex]?.curves[curveIndex]
   if (!pts || pts.length < 2) return null
 
-  const { lengths, bends } = analyzeFrame(pts)
+  const { lengths, bends } = analyzeFrame(pts, dirs[0], dirs[1])
   const count = lengths.length
   if (count === 0) return null
   const lenMax = maxima.length > 0 ? maxima.length : 1
   const bendMax = maxima.bend > 0 ? maxima.bend : 1
-  const denom = Math.max(count - 1, 1)
-  const xFor = (k: number) => PAD.left + (k / denom) * plotW
+  const xFor = (position: number) => PAD.left + (position / count) * plotW
   const yFor = (value: number, max: number) => baselineY - (value / max) * plotH
 
   let sumLengths = 0
   for (const value of lengths) sumLengths += value
   const avgLength = sumLengths / count
   let maxBend = 0
-  for (const value of bends) if (value > maxBend) maxBend = value
+  for (const value of bends) if (value !== null && value > maxBend) maxBend = value
   drawGuide(ctx, yFor(avgLength, lenMax), `avg length ${avgLength.toFixed(3)}`, theme.length, plotW, theme)
   drawGuide(ctx, yFor(maxBend, bendMax), `max bend ${maxBend.toFixed(1)}°`, theme.bend, plotW, theme)
 
   const series = [
-    { values: lengths, max: lenMax, color: theme.length },
-    { values: bends, max: bendMax, color: theme.bend },
+    { values: lengths, offset: 0.5, max: lenMax, color: theme.length },
+    { values: bends, offset: 0, max: bendMax, color: theme.bend },
   ]
-
-  if (count === 1) {
-    for (const item of series) {
-      ctx.fillStyle = item.color
-      ctx.beginPath()
-      ctx.arc(xFor(0), yFor(item.values[0], item.max), 2.2, 0, Math.PI * 2)
-      ctx.fill()
-    }
-    return { avgLength, maxBend }
-  }
 
   ctx.lineWidth = 1.8
   ctx.lineJoin = 'round'
   ctx.lineCap = 'round'
   for (const item of series) {
     ctx.strokeStyle = item.color
+    ctx.fillStyle = item.color
     ctx.beginPath()
-    ctx.moveTo(xFor(0), yFor(item.values[0], item.max))
-    for (let k = 1; k < item.values.length; k += 1) {
-      ctx.lineTo(xFor(k), yFor(item.values[k], item.max))
-    }
+    let pen = false
+    item.values.forEach((value, k) => {
+      if (value === null) {
+        pen = false
+        return
+      }
+      const x = xFor(k + item.offset)
+      const y = yFor(value, item.max)
+      if (pen) ctx.lineTo(x, y)
+      else ctx.moveTo(x, y)
+      pen = true
+    })
     ctx.stroke()
+    // Isolated samples (neighbors undefined) would otherwise be invisible.
+    item.values.forEach((value, k) => {
+      if (value === null || item.values[k - 1] != null || item.values[k + 1] != null) return
+      ctx.beginPath()
+      ctx.arc(xFor(k + item.offset), yFor(value, item.max), 2.2, 0, Math.PI * 2)
+      ctx.fill()
+    })
   }
   return { avgLength, maxBend }
 }
@@ -224,7 +241,8 @@ export function SegmentPlot({ frameSet, frameIndex, curveIndex }: SegmentPlotPro
   const [size, setSize] = useState({ width: 0, height: 0 })
   const dark = usePrefersDark()
   const theme = dark ? DARK_THEME : LIGHT_THEME
-  const maxima = useMemo(() => scanMaxima(frameSet.frames, curveIndex), [frameSet, curveIndex])
+  const dirs = useMemo(() => endDirections(frameSet, curveIndex), [frameSet, curveIndex])
+  const maxima = useMemo(() => scanMaxima(frameSet.frames, curveIndex, dirs), [frameSet, curveIndex, dirs])
 
   useEffect(() => {
     const container = containerRef.current
@@ -248,7 +266,7 @@ export function SegmentPlot({ frameSet, frameIndex, curveIndex }: SegmentPlotPro
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    const aggregates = draw(frameSet.frames, frameIndex, curveIndex, maxima, ctx, size.width, size.height, theme)
+    const aggregates = draw(frameSet.frames, frameIndex, curveIndex, maxima, dirs, ctx, size.width, size.height, theme)
     if (aggregates) {
       canvas.dataset.avgLength = String(aggregates.avgLength)
       canvas.dataset.maxBend = String(aggregates.maxBend)
@@ -256,7 +274,7 @@ export function SegmentPlot({ frameSet, frameIndex, curveIndex }: SegmentPlotPro
       delete canvas.dataset.avgLength
       delete canvas.dataset.maxBend
     }
-  }, [frameSet, frameIndex, curveIndex, size, maxima, theme])
+  }, [frameSet, frameIndex, curveIndex, size, maxima, dirs, theme])
 
   return (
     <div className="segment-plot" ref={containerRef}>

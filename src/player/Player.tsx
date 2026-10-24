@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import type { Curve, FrameSet, Vec2 } from '../solver/types'
+import type { FrameSet } from '../solver/types'
 import { FrameCanvas } from './FrameCanvas'
 import { SegmentPlot } from './SegmentPlot'
 import { CoordinatePlot } from './CoordinatePlot'
+import { type CurveProbe, readProbe } from './canvasKit'
 import { formatEnergy } from '../lib/format'
 import './player.css'
 
@@ -11,12 +12,15 @@ export interface PlayerProps {
   frameSet: FrameSet
   hidden: boolean[]
   onToggleHidden?: (curveIndex: number) => void
-  onCreateFromFrame?: (poly: Vec2[], source: Curve) => void
 }
 
 const BASE_FPS = 30
 const MIN_SPEED = 0.1
 const MAX_SPEED = 16
+
+function formatNum(value: number, digits = 3): string {
+  return Number(value.toFixed(digits)).toString()
+}
 
 function formatSpeed(value: number): string {
   return `${Number(value.toFixed(2))}×`
@@ -99,7 +103,7 @@ function EyeIcon({ off }: { off: boolean }) {
  * Playback widget for a {@link FrameSet}. Remounted per compute run by the
  * parent (via a `key`), so each run starts cleanly at frame 0.
  */
-export function Player({ frameSet, hidden, onToggleHidden, onCreateFromFrame }: PlayerProps) {
+export function Player({ frameSet, hidden, onToggleHidden }: PlayerProps) {
   const total = frameSet.frames.length
   const lastIndex = Math.max(0, total - 1)
 
@@ -109,6 +113,7 @@ export function Player({ frameSet, hidden, onToggleHidden, onCreateFromFrame }: 
   const [loop, setLoop] = useState(false)
   const [split, setSplit] = useState(false)
   const [curveIndex, setCurveIndex] = useState(0)
+  const [probe, setProbe] = useState<CurveProbe | null>(null)
 
   // Mirrors of state read inside the animation loop without re-subscribing.
   const indexRef = useRef(0)
@@ -218,7 +223,6 @@ export function Player({ frameSet, hidden, onToggleHidden, onCreateFromFrame }: 
   const ke = currentFrame?.ke ?? 0
   const canStep = total > 1
 
-  const curveMeta = frameSet.meta.input?.curves
   const curveCount = Math.max(frameSet.meta.curveCount, 1)
   const curveIndices = useMemo(
     () => Array.from({ length: curveCount }, (_, ci) => ci),
@@ -226,10 +230,12 @@ export function Player({ frameSet, hidden, onToggleHidden, onCreateFromFrame }: 
   )
   const safeCurve = Math.min(Math.max(curveIndex, 0), curveCount - 1)
 
+  const reading = probe ? readProbe(currentFrame?.curves[probe.curve], probe) : null
+
   const legend = useMemo(
     () => [
-      { className: 'start', label: 'start' },
-      { className: 'end', label: 'end' },
+      { className: 'fixed', label: 'fixed position' },
+      { className: 'free', label: 'free position' },
       { className: 'point', label: 'interior point' },
       { className: 'orient', label: 'orientation' },
     ],
@@ -291,21 +297,23 @@ export function Player({ frameSet, hidden, onToggleHidden, onCreateFromFrame }: 
           </div>
         ) : null}
 
-        {onCreateFromFrame && curveMeta ? (
-          <button
-            type="button"
-            className="btn btn--sm"
-            disabled={playing}
-            title="Create a new editable curve from this frame"
-            onClick={() => {
-              const poly = frameSet.frames[safeIndex]?.curves[safeCurve]
-              const source = curveMeta[safeCurve]
-              if (poly && source) onCreateFromFrame(poly, source)
-            }}
-          >
-            + Curve from frame
-          </button>
-        ) : null}
+        {reading && probe && !hidden[probe.curve] ? (
+          <span className="probe-readout" role="status" data-testid="tangent-readout">
+            Curve {probe.curve + 1} · point ({formatNum(reading.point[0])}, {formatNum(reading.point[1])}) ·
+            tangent ({formatNum(reading.tangent[0])}, {formatNum(reading.tangent[1])}) ·{' '}
+            {formatNum(reading.angleDeg, 2)}°
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              aria-label="Clear tangent measurement"
+              onClick={() => setProbe(null)}
+            >
+              ✕
+            </button>
+          </span>
+        ) : (
+          <span className="probe-hint">Click the curve to measure its tangent</span>
+        )}
 
         <button
           type="button"
@@ -326,7 +334,14 @@ export function Player({ frameSet, hidden, onToggleHidden, onCreateFromFrame }: 
             <CoordinatePlot frameSet={frameSet} frameIndex={safeIndex} axis={1} hidden={hidden} />
           </div>
         ) : (
-          <FrameCanvas frameSet={frameSet} frameIndex={safeIndex} playing={playing} hidden={hidden} />
+          <FrameCanvas
+            frameSet={frameSet}
+            frameIndex={safeIndex}
+            playing={playing}
+            hidden={hidden}
+            probe={probe}
+            onProbe={setProbe}
+          />
         )}
       </div>
 
