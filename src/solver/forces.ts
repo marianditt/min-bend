@@ -61,42 +61,6 @@ export function computeSegments(pts: Vec2[]): {
   return { segments, lengths, unitVecs }
 }
 
-/** Compute the reference length L = average of all segment lengths. */
-export function computeReferenceLength(lengths: number[]): number {
-  let sum = 0
-  for (const len of lengths) sum += len
-  return sum / lengths.length
-}
-
-/** Length equalization force on free point k (1 <= k <= n). */
-export function computeLengthForce(
-  k: number,
-  lengths: number[],
-  unitVecs: Vec2[],
-  L: number,
-  kLen: number,
-): Vec2 {
-  // F_len(p_k) = kLen * [ (l_k - L)*shat_k - (l_{k-1} - L)*shat_{k-1} ]
-  // k is the free point index (1..n), segments are 0..n
-  // segment k is p_{k+1} - p_k, segment k-1 is p_k - p_{k-1}
-
-  let force: Vec2 = [0, 0]
-
-  // Contribution from segment k (p_{k+1} - p_k)
-  if (lengths[k] >= EPS_STABILIZE) {
-    const term = (lengths[k] - L) * kLen
-    force = add(force, scale(unitVecs[k], term))
-  }
-
-  // Contribution from segment k-1 (p_k - p_{k-1})
-  if (lengths[k - 1] >= EPS_STABILIZE) {
-    const term = (lengths[k - 1] - L) * kLen
-    force = sub(force, scale(unitVecs[k - 1], term))
-  }
-
-  return force
-}
-
 /**
  * Symmetric bend forces for the joint at free point k (triple p_{k-1}, p_k, p_{k+1}).
  *
@@ -142,122 +106,114 @@ export function computeFrictionForce(vel: Vec2, gamma: number): Vec2 {
   return scale(vel, -gamma)
 }
 
-/** Cap a vector's length at max, preserving direction. */
-export function clampMagnitude(v: Vec2, max: number): Vec2 {
-  const m = length(v)
-  return m > max ? scale(v, max / m) : v
+/** A constraint attached to one control point of a chain. */
+export interface PointConstraint {
+  /** Index of the control point within the chain. */
+  index: number
+  /** Fixed unit tangent, or null. */
+  dir: Vec2 | null
+  /** Incoming and outgoing segments must be collinear (free orientation, fixed position). */
+  collinear: boolean
 }
 
-/** Compute total acceleration for all free points (indices 1..n). */
+/** Per-chain data the force and constraint routines need. */
+export interface ChainModel {
+  /** Whether each point is integrated (false = pinned). */
+  movable: boolean[]
+  /** Target length of each segment. */
+  targets: number[]
+  constraints: PointConstraint[]
+}
+
+function lengthTerm(model: ChainModel, lengths: number[], k: number, kLen: number): number {
+  const len = lengths[k]
+  if (len < EPS_STABILIZE) return 0
+  return (len - model.targets[k]) * kLen
+}
+
+/** Total acceleration of every movable point of a chain (mass = 1). */
 export function computeAcceleration(
   pts: Vec2[],
   vel: Vec2[],
   constants: PhysicsConstants,
-  referenceLength?: number,
+  model: ChainModel,
 ): Vec2[] {
-  const n = pts.length - 2 // number of free points
+  const last = pts.length - 1
   const { lengths, unitVecs } = computeSegments(pts)
-  const L = referenceLength !== undefined ? referenceLength : computeReferenceLength(lengths)
 
   const accel: Vec2[] = new Array(pts.length)
-  for (let i = 0; i < pts.length; i++) accel[i] = [0, 0]
+  for (let i = 0; i <= last; i++) accel[i] = [0, 0]
 
-  for (let k = 1; k <= n; k++) {
-    const fLen = computeLengthForce(k, lengths, unitVecs, L, constants.kLen)
-    const fFric = computeFrictionForce(vel[k], constants.gamma)
-    accel[k] = add(add(accel[k], fLen), fFric)
-
-    // Joint k spans (p_{k-1}, p_k, p_{k+1}); distribute its bend force to the
-    // neighboring free points too (anchors 0 and N-1 absorb their share).
-    const { prev, cur, next } = computeBendForces(k, lengths, unitVecs, constants.kBend)
-    accel[k] = add(accel[k], cur)
-    if (k - 1 >= 1) accel[k - 1] = add(accel[k - 1], prev)
-    if (k + 1 <= n) accel[k + 1] = add(accel[k + 1], next)
+  for (let i = 0; i <= last; i++) {
+    if (!model.movable[i]) continue
+    let force: Vec2 = computeFrictionForce(vel[i], constants.gamma)
+    if (i < last) force = add(force, scale(unitVecs[i], lengthTerm(model, lengths, i, constants.kLen)))
+    if (i > 0) force = sub(force, scale(unitVecs[i - 1], lengthTerm(model, lengths, i - 1, constants.kLen)))
+    accel[i] = force
   }
 
-  // Per-free-point force cap — clamp each free point's net acceleration.
-  if (Number.isFinite(constants.maxForce)) {
-    for (let k = 1; k <= n; k++) accel[k] = clampMagnitude(accel[k], constants.maxForce)
+  for (let j = 1; j < last; j++) {
+    const { prev, cur, next } = computeBendForces(j, lengths, unitVecs, constants.kBend)
+    if (model.movable[j - 1]) accel[j - 1] = add(accel[j - 1], prev)
+    if (model.movable[j]) accel[j] = add(accel[j], cur)
+    if (model.movable[j + 1]) accel[j + 1] = add(accel[j + 1], next)
+  }
+
+  // A movable control point with a fixed tangent drags its two neighbors
+  // along (they are slaved to its tangent line), so their perpendicular
+  // accelerations are pooled onto it instead of being lost to the projection.
+  for (const c of model.constraints) {
+    if (!c.dir || !model.movable[c.index]) continue
+    const d = c.dir
+    const members = [c.index]
+    if (c.index > 0) members.push(c.index - 1)
+    if (c.index < last) members.push(c.index + 1)
+    let perpSum: Vec2 = [0, 0]
+    for (const m of members) perpSum = add(perpSum, sub(accel[m], scale(d, dot(accel[m], d))))
+    const own = accel[c.index]
+    accel[c.index] = add(scale(d, dot(own, d)), scale(perpSum, 1 / members.length))
   }
 
   return accel
 }
 
 /**
- * Pin the single interior point of an n = 1 span that is bound at both ends to
- * the intersection of the two tangent rays (a + t·d0 and b − s·d1, t, s ≥ 0).
- * When the rays are parallel or the intersection falls behind either ray, fall
- * back to the span midpoint projected onto the start ray.
+ * Enforce control-point constraints by projection:
+ *  - fixed orientation d: both neighbors lie on the line through the point
+ *    along d (previous behind it, next ahead of it);
+ *  - collinear: both neighbors are rotated about the point onto their mean
+ *    direction, keeping their distances, so the incoming and outgoing segment
+ *    directions are identical (dot product 1) while the angle stays free.
  */
-function pinToRayIntersection(pts: Vec2[], vel: Vec2[], d0: Vec2, d1: Vec2): void {
-  const a = pts[0]
-  const b = pts[pts.length - 1]
-  const det = d0[0] * d1[1] - d0[1] * d1[0]
-
-  let pinned: Vec2 | null = null
-  if (Math.abs(det) >= EPS_STABILIZE) {
-    const cx = b[0] - a[0]
-    const cy = b[1] - a[1]
-    const t = (cx * d1[1] - cy * d1[0]) / det
-    const s = (d0[0] * cy - d0[1] * cx) / det
-    if (t >= 0 && s >= 0) pinned = add(a, scale(d0, t))
-  }
-
-  if (pinned === null) {
-    const mid: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
-    const rel = sub(mid, a)
-    const proj = dot(rel, d0)
-    pinned = add(a, scale(d0, proj > 0 ? proj : 0))
-  }
-
-  pts[1] = pinned
-  vel[1] = [0, 0]
-}
-
-/**
- * Enforce orientation constraints on the first and/or last free point of a span.
- * Either direction may be null (that end is unconstrained). When the span has a
- * single interior point bound at both ends, the point is pinned to the tangent
- * ray intersection instead of the usual independent projections.
- */
-export function enforceOrientationConstraints(
-  pts: Vec2[],
-  vel: Vec2[],
-  startDir: Vec2 | null,
-  endDir: Vec2 | null,
-): void {
-  const N = pts.length
-  if (N <= 2) return
-
-  const d0raw = startDir ? normalize(startDir) : null
-  const d1raw = endDir ? normalize(endDir) : null
-  const d0 = d0raw && length(d0raw) >= EPS_STABILIZE ? d0raw : null
-  const d1 = d1raw && length(d1raw) >= EPS_STABILIZE ? d1raw : null
-
-  if (!d0 && !d1) return
-
-  if (d0 && d1 && N === 3) {
-    pinToRayIntersection(pts, vel, d0, d1)
-    return
-  }
-
-  if (d0) {
-    // Project p_1 onto ray from p_0 along d0: p_1 = p_0 + max(((p_1 - p_0)·d0), 0) * d0
-    const p1Rel = sub(pts[1], pts[0])
-    const proj1 = dot(p1Rel, d0)
-    pts[1] = add(pts[0], scale(d0, proj1 > 0 ? proj1 : 0))
-    // Project velocity: v_1 = (v_1·d0) * d0
-    vel[1] = scale(d0, dot(vel[1], d0))
-  }
-
-  if (d1) {
-    // m = N-2 (index of last free point)
-    const m = N - 2
-    const pmRel = sub(pts[N - 1], pts[m])
-    const projM = dot(pmRel, d1)
-    pts[m] = sub(pts[N - 1], scale(d1, projM > 0 ? projM : 0))
-    // Project velocity: v_m = (v_m·d1) * d1
-    vel[m] = scale(d1, dot(vel[m], d1))
+export function enforceConstraints(pts: Vec2[], vel: Vec2[], constraints: PointConstraint[]): void {
+  const last = pts.length - 1
+  for (const c of constraints) {
+    const i = c.index
+    if (c.dir) {
+      const d = c.dir
+      if (i > 0) {
+        const proj = Math.max(dot(sub(pts[i], pts[i - 1]), d), 0)
+        pts[i - 1] = sub(pts[i], scale(d, proj))
+        vel[i - 1] = scale(d, dot(vel[i - 1], d))
+      }
+      if (i < last) {
+        const proj = Math.max(dot(sub(pts[i + 1], pts[i]), d), 0)
+        pts[i + 1] = add(pts[i], scale(d, proj))
+        vel[i + 1] = scale(d, dot(vel[i + 1], d))
+      }
+    } else if (c.collinear && i > 0 && i < last) {
+      const in_ = sub(pts[i], pts[i - 1])
+      const out = sub(pts[i + 1], pts[i])
+      const l0 = length(in_)
+      const l1 = length(out)
+      const t0 = normalize(in_)
+      const t1 = normalize(out)
+      let d = normalize(add(t0, t1))
+      if (length(d) === 0) d = length(t1) > 0 ? t1 : t0
+      if (length(d) === 0) continue
+      pts[i - 1] = sub(pts[i], scale(d, l0))
+      pts[i + 1] = add(pts[i], scale(d, l1))
+    }
   }
 }
 
@@ -270,11 +226,10 @@ export function verifyFinite(pts: Vec2[], vel: Vec2[], accel: Vec2[]): void {
   }
 }
 
-/** Compute kinetic energy of free points. */
+/** Compute kinetic energy (pinned points have zero velocity). */
 export function computeKineticEnergy(vel: Vec2[]): number {
   let ke = 0
-  for (let k = 1; k < vel.length - 1; k++) {
-    const v = vel[k]
+  for (const v of vel) {
     ke += v[0] * v[0] + v[1] * v[1]
   }
   return 0.5 * ke

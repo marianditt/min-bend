@@ -25,16 +25,16 @@ function makeStorage() {
 const validSetup: Setup = {
   curves: [
     {
-      n: 2,
       fixPoints: [
         { pos: [0, 0], orientation: null },
-        { pos: [4, 0], orientation: [1, 0] },
+        { pos: [4, 0], orientation: [1, 0], posFree: true },
       ],
       spans: [[[1, 0.5]]],
       targetLength: 5,
       hidden: true,
     },
   ],
+  resolution: 0.5,
 }
 
 describe('migrateEnvelope', () => {
@@ -110,12 +110,29 @@ describe('storage round-trip', () => {
   })
 
   it('drops the hidden flag when it is not exactly true', () => {
-    const setup = { curves: [{ ...validSetup.curves[0], hidden: 'yes' }] }
+    const setup = { ...validSetup, curves: [{ ...validSetup.curves[0], hidden: 'yes' }] }
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({ version: STORAGE_VERSION, setup, constants: DEFAULT_CONSTANTS }),
     )
     const loaded = loadState()
     expect(loaded?.setup.curves[0]?.hidden).toBeUndefined()
+  })
+
+  it('migrates a v1 payload: adds the default resolution and drops legacy fields', () => {
+    const { resolution: _r, ...rest } = validSetup
+    const legacyConstants = { ...DEFAULT_CONSTANTS, maxForce: 1000 }
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        setup: { ...rest, curves: [{ ...rest.curves[0], n: 6 }] },
+        constants: legacyConstants,
+      }),
+    )
+    const loaded = loadState()
+    expect(loaded?.setup.resolution).toBe(1)
+    expect(loaded?.setup.curves[0]).not.toHaveProperty('n')
+    expect(loaded?.constants).toEqual(DEFAULT_CONSTANTS)
   })
 })

@@ -1,17 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Curve, FrameSet } from '../solver/types'
-import { fixIndices } from '../solver/curve'
+import type { MouseEvent as ReactMouseEvent } from 'react'
+import type { FrameSet, Vec2 } from '../solver/types'
 import { boundsForScale, fitScale, nextDisplayedScale, type Bounds, type EasePhase } from './scaleEase'
 import {
+  type CurveProbe,
+  type Projector,
   type Theme,
   LIGHT_THEME,
   DARK_THEME,
+  closestOnCurves,
   computePtsBounds,
   makeProjector,
   drawGrid,
   drawAxes,
   drawArrow,
+  drawControlPoint,
+  drawInteriorPoint,
   curveColor,
+  readProbe,
   usePrefersDark,
 } from './canvasKit'
 
@@ -20,9 +26,9 @@ export interface FrameCanvasProps {
   frameIndex: number
   playing: boolean
   hidden: boolean[]
+  probe: CurveProbe | null
+  onProbe: (probe: CurveProbe | null) => void
 }
-
-const EMPTY_CURVE: Curve = { fixPoints: [], n: 0, spans: [] }
 
 function draw(
   frameSet: FrameSet,
@@ -34,7 +40,8 @@ function draw(
   theme: Theme,
   dark: boolean,
   hidden: boolean[],
-) {
+  probe: CurveProbe | null,
+): Projector {
   ctx.fillStyle = theme.bg
   ctx.fillRect(0, 0, width, height)
 
@@ -43,7 +50,7 @@ function draw(
   drawAxes(ctx, project, width, height, theme)
 
   const { frames } = frameSet
-  if (frames.length === 0) return
+  if (frames.length === 0) return project
   const index = Math.min(Math.max(frameIndex, 0), frames.length - 1)
   const curves = frames[index].curves
   const inputCurves = frameSet.meta.input?.curves ?? []
@@ -53,9 +60,9 @@ function draw(
     if (hidden[ci]) return
     const color = curveColor(ci, dark)
     const screen: [number, number][] = pts.map(([x, y]) => [project.toX(x), project.toY(y)])
-    const curve = inputCurves[ci] ?? EMPTY_CURVE
-    const fix = fixIndices(curve)
-    const fixSet = new Set(fix)
+    const curve = inputCurves[ci]
+    const control = frameSet.meta.controlIndices?.[ci] ?? []
+    const controlSet = new Set(control)
 
     if (screen.length >= 2) {
       ctx.strokeStyle = color
@@ -68,50 +75,52 @@ function draw(
       ctx.stroke()
     }
 
-    ctx.fillStyle = color
-    ctx.strokeStyle = theme.pointRing
-    ctx.lineWidth = 1.4
-    for (let i = 1; i < screen.length - 1; i += 1) {
-      if (fixSet.has(i)) continue
-      ctx.beginPath()
-      ctx.arc(screen[i][0], screen[i][1], 3.4, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.stroke()
+    for (let i = 0; i < screen.length; i += 1) {
+      if (!controlSet.has(i)) drawInteriorPoint(ctx, screen[i][0], screen[i][1], theme)
     }
 
-    curve.fixPoints.forEach((fp, pi) => {
-      if (!fp.orientation) return
-      const p = screen[fix[pi]]
+    curve?.fixPoints.forEach((fp, pi) => {
+      const p = screen[control[pi]]
       if (!p) return
-      const len = Math.hypot(fp.orientation[0], fp.orientation[1])
-      if (len < 1e-9) return
-      const ux = fp.orientation[0] / len
-      const uy = fp.orientation[1] / len
-      drawArrow(ctx, p[0], p[1], p[0] + ux * 30, p[1] - uy * 30, theme.orient)
+      if (fp.orientation) {
+        const len = Math.hypot(fp.orientation[0], fp.orientation[1])
+        if (len >= 1e-9) {
+          const ux = fp.orientation[0] / len
+          const uy = fp.orientation[1] / len
+          drawArrow(ctx, p[0], p[1], p[0] + ux * 30, p[1] - uy * 30, theme.orient)
+        }
+      }
     })
-
-    const drawEndpoint = (p: [number, number], endpointColor: string) => {
-      const size = 12
-      ctx.fillStyle = endpointColor
-      ctx.strokeStyle = theme.pointRing
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.rect(p[0] - size / 2, p[1] - size / 2, size, size)
-      ctx.fill()
-      ctx.stroke()
-    }
-    const lastPi = curve.fixPoints.length - 1
-    curve.fixPoints.forEach((_, pi) => {
-      const p = screen[fix[pi]]
-      if (!p) return
-      if (pi === 0) drawEndpoint(p, theme.start)
-      else if (pi === lastPi) drawEndpoint(p, theme.end)
-      else drawEndpoint(p, theme.orient)
+    curve?.fixPoints.forEach((fp, pi) => {
+      const p = screen[control[pi]]
+      if (p) drawControlPoint(ctx, p[0], p[1], fp.posFree === true, theme)
     })
   })
+
+  if (probe && !hidden[probe.curve]) {
+    const reading = readProbe(curves[probe.curve], probe)
+    if (reading) {
+      const x = project.toX(reading.point[0])
+      const y = project.toY(reading.point[1])
+      drawArrow(
+        ctx,
+        x,
+        y,
+        x + reading.tangent[0] * 48,
+        y - reading.tangent[1] * 48,
+        theme.probe,
+      )
+      ctx.strokeStyle = theme.probe
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(x, y, 7, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+  }
+  return project
 }
 
-export function FrameCanvas({ frameSet, frameIndex, playing, hidden }: FrameCanvasProps) {
+export function FrameCanvas({ frameSet, frameIndex, playing, hidden, probe, onProbe }: FrameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -119,6 +128,7 @@ export function FrameCanvas({ frameSet, frameIndex, playing, hidden }: FrameCanv
 
   const displayedScaleRef = useRef(0)
   const phaseRef = useRef<EasePhase | null>(null)
+  const projectorRef = useRef<Projector | null>(null)
 
   const clampedIndex = Math.min(Math.max(frameIndex, 0), Math.max(frameSet.frames.length - 1, 0))
   const frameCurves = frameSet.frames[clampedIndex]?.curves
@@ -164,13 +174,28 @@ export function FrameCanvas({ frameSet, frameIndex, playing, hidden }: FrameCanv
     displayedScaleRef.current = result.scale
     phaseRef.current = result.phase
     const drawBounds = result.scale === target ? bounds : boundsForScale(bounds, target, result.scale)
-    draw(frameSet, frameIndex, ctx, size.width, size.height, drawBounds, theme, dark, hidden)
+    projectorRef.current = draw(frameSet, frameIndex, ctx, size.width, size.height, drawBounds, theme, dark, hidden, probe)
     canvas.dataset.scale = String(result.scale)
-  }, [frameSet, frameIndex, size, bounds, theme, playing, clampedIndex, dark, hidden])
+  }, [frameSet, frameIndex, size, bounds, theme, playing, clampedIndex, dark, hidden, probe])
+
+  const handleClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current
+    const project = projectorRef.current
+    if (!canvas || !project) return
+    const rect = canvas.getBoundingClientRect()
+    const sx = event.clientX - rect.left
+    const sy = event.clientY - rect.top
+    const world: Vec2 = [
+      project.cx + (sx - size.width / 2) / project.scale,
+      project.cy - (sy - size.height / 2) / project.scale,
+    ]
+    const visible = (frameCurves ?? []).map((pts, ci) => (hidden[ci] ? null : pts))
+    onProbe(closestOnCurves(visible, world))
+  }
 
   return (
     <div className="frame-canvas" ref={containerRef}>
-      <canvas ref={canvasRef} />
+      <canvas ref={canvasRef} onClick={handleClick} title="Click to measure the tangent at the closest curve point" />
     </div>
   )
 }

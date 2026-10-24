@@ -1,4 +1,5 @@
 import {
+  DEFAULT_RESOLUTION,
   type Curve,
   type FixPoint,
   type PhysicsConstants,
@@ -7,7 +8,7 @@ import {
 } from '../solver/types'
 
 export const STORAGE_KEY = 'min-bend:state'
-export const STORAGE_VERSION = 1
+export const STORAGE_VERSION = 2
 
 export interface PersistedState {
   setup: Setup
@@ -18,12 +19,16 @@ export interface PersistedState {
 export type Migration = (state: Record<string, unknown>) => Record<string, unknown>
 
 /**
- * Ordered migrations keyed by the version they upgrade FROM. The schema is on
- * v1 today, so there is nothing to migrate yet; when the stored shape changes,
- * add the upgrade here (e.g. `0: (s) => ({ ...s, curves: ... })`) instead of
- * dropping the user's saved work.
+ * Ordered migrations keyed by the version they upgrade FROM. When the stored
+ * shape changes, add the upgrade here instead of dropping the user's saved work.
  */
-const MIGRATIONS: Record<number, Migration> = {}
+const MIGRATIONS: Record<number, Migration> = {
+  // v1 -> v2: per-curve interior point counts became one global resolution.
+  1: (state) => {
+    const setup = isRecord(state.setup) ? state.setup : {}
+    return { ...state, setup: { ...setup, resolution: DEFAULT_RESOLUTION } }
+  },
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -43,15 +48,16 @@ function sanitizeFixPoint(value: unknown): FixPoint | null {
   if (!isRecord(value) || !isVec2(value.pos)) return null
   const orientation = value.orientation
   if (orientation !== null && orientation !== undefined && !isVec2(orientation)) return null
-  return {
+  const fp: FixPoint = {
     pos: [value.pos[0], value.pos[1]],
     orientation: orientation ? [orientation[0], orientation[1]] : null,
   }
+  if (value.posFree === true) fp.posFree = true
+  return fp
 }
 
 function sanitizeCurve(value: unknown): Curve | null {
   if (!isRecord(value) || !Array.isArray(value.fixPoints) || !Array.isArray(value.spans)) return null
-  if (!isFiniteNumber(value.n)) return null
 
   const fixPoints: FixPoint[] = []
   for (const raw of value.fixPoints) {
@@ -71,7 +77,7 @@ function sanitizeCurve(value: unknown): Curve | null {
     spans.push(span)
   }
 
-  const curve: Curve = { n: Math.max(0, Math.floor(value.n)), fixPoints, spans }
+  const curve: Curve = { fixPoints, spans }
   if (value.targetLength === null) curve.targetLength = null
   else if (isFiniteNumber(value.targetLength)) curve.targetLength = value.targetLength
   if (value.hidden === true) curve.hidden = true
@@ -86,7 +92,8 @@ function sanitizeSetup(value: unknown): Setup | null {
     if (!curve || curve.fixPoints.length < 2) return null
     curves.push(curve)
   }
-  return { curves }
+  const resolution = isFiniteNumber(value.resolution) && value.resolution > 0 ? value.resolution : DEFAULT_RESOLUTION
+  return { curves, resolution }
 }
 
 function sanitizeConstants(value: unknown): PhysicsConstants | null {
@@ -99,8 +106,7 @@ function sanitizeConstants(value: unknown): PhysicsConstants | null {
     !isFiniteNumber(c.h) ||
     !isFiniteNumber(c.epsilon) ||
     !isFiniteNumber(c.settleFrames) ||
-    !isFiniteNumber(c.maxIter) ||
-    !isFiniteNumber(c.maxForce)
+    !isFiniteNumber(c.maxIter)
   ) {
     return null
   }
@@ -112,7 +118,6 @@ function sanitizeConstants(value: unknown): PhysicsConstants | null {
     epsilon: c.epsilon,
     settleFrames: c.settleFrames,
     maxIter: c.maxIter,
-    maxForce: c.maxForce,
   }
 }
 

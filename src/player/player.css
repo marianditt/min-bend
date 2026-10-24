@@ -101,17 +101,27 @@
   flex: none;
 }
 
-.legend-chip__swatch--start {
-  background: #128a43;
+.legend-chip__swatch--fixed,
+.legend-chip__swatch--free,
+.legend-chip__swatch--point {
+  border-radius: 50%;
 }
 
-.legend-chip__swatch--end {
-  background: #cf2e2e;
+.legend-chip__swatch--fixed {
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1.5px #1f2530;
+}
+
+.legend-chip__swatch--free {
+  background: #9ca3af;
+  box-shadow: inset 0 0 0 1.5px #1f2530;
 }
 
 .legend-chip__swatch--point {
   background: #3563e9;
-  border-radius: 50%;
+  width: 6px;
+  height: 6px;
+  margin: 1.5px;
 }
 
 .legend-chip__swatch--orient {
@@ -119,12 +129,13 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  .legend-chip__swatch--start {
-    background: #4ade80;
+  .legend-chip__swatch--fixed {
+    box-shadow: inset 0 0 0 1.5px #e6e9ef;
   }
 
-  .legend-chip__swatch--end {
-    background: #f87272;
+  .legend-chip__swatch--free {
+    background: #6b7280;
+    box-shadow: inset 0 0 0 1.5px #e6e9ef;
   }
 
   .legend-chip__swatch--point {
@@ -134,6 +145,24 @@
   .legend-chip__swatch--orient {
     background: #fbbf24;
   }
+}
+
+.probe-readout,
+.probe-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted, #6b7280);
+}
+
+.probe-readout {
+  color: #c026d3;
+}
+
+.frame-canvas canvas {
+  cursor: crosshair;
 }
 
 .player__hud {

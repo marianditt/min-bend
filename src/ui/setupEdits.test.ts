@@ -1,18 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import type { Curve, Setup, Vec2 } from '../solver/types'
-import { appendBakedCurve, curveFromPolyline, toggleCurveHidden } from './setupEdits'
+import type { Setup } from '../solver/types'
+import { setFixPosFree, setResolution, toggleCurveHidden } from './setupEdits'
 
-function curve(n: number, orientations: (Vec2 | null)[] = []): Curve {
-  return {
-    n,
-    fixPoints: orientations.map((orientation, i) => ({ pos: [i * 3, 0] as Vec2, orientation })),
-    spans: Array.from({ length: Math.max(orientations.length - 1, 0) }, () => []),
-  }
-}
+const base = (): Setup => ({
+  resolution: 1,
+  curves: [
+    {
+      fixPoints: [
+        { pos: [0, 0], orientation: null },
+        { pos: [1, 0], orientation: null },
+      ],
+      spans: [[]],
+    },
+  ],
+})
 
 describe('toggleCurveHidden', () => {
   it('flips the hidden flag without mutating the input', () => {
-    const setup: Setup = { curves: [{ n: 1, fixPoints: [{ pos: [0, 0], orientation: null }, { pos: [1, 0], orientation: null }], spans: [[]] }] }
+    const setup = base()
     const shown = toggleCurveHidden(setup, 0)
     expect(shown.curves[0].hidden).toBe(true)
     expect(setup.curves[0].hidden).toBeUndefined()
@@ -20,57 +25,26 @@ describe('toggleCurveHidden', () => {
   })
 
   it('is a no-op for an out-of-range index', () => {
-    const setup: Setup = { curves: [] }
+    const setup = base()
     expect(toggleCurveHidden(setup, 3)).toBe(setup)
   })
 })
 
-describe('curveFromPolyline', () => {
-  const fourFixSource = (): Curve => curve(2, [[1, 0], null, [0, 1], null])
-  const tenPointPoly = (): Vec2[] => Array.from({ length: 10 }, (_, i): Vec2 => [i, i * 0.5])
-
-  it('turns every polyline point into a fix point with n = 0', () => {
-    const baked = curveFromPolyline(fourFixSource(), tenPointPoly())
-    expect(baked.n).toBe(0)
-    expect(baked.fixPoints).toHaveLength(10)
-    expect(baked.fixPoints.map((fp) => fp.pos)).toEqual(tenPointPoly())
-    expect(baked.spans).toHaveLength(9)
-    expect(baked.spans.every((span) => span.length === 0)).toBe(true)
-    expect(baked.targetLength).toBeUndefined()
-  })
-
-  it('copies source fix-point tangents and leaves derived points unoriented', () => {
-    const baked = curveFromPolyline(fourFixSource(), tenPointPoly())
-    expect(baked.fixPoints[0].orientation).toEqual([1, 0])
-    expect(baked.fixPoints[6].orientation).toEqual([0, 1])
-    expect(baked.fixPoints[3].orientation).toBeNull()
-    expect(baked.fixPoints[9].orientation).toBeNull()
-    for (const i of [1, 2, 4, 5, 7, 8]) {
-      expect(baked.fixPoints[i].orientation).toBeNull()
-    }
-  })
-
-  it('keeps endpoint tangents for a single-span source', () => {
-    const source = curve(6, [[0, 1], [0, 1]])
-    const poly = Array.from({ length: 8 }, (_, i): Vec2 => [i, 0])
-    const baked = curveFromPolyline(source, poly)
-    expect(baked.n).toBe(0)
-    expect(baked.fixPoints).toHaveLength(8)
-    expect(baked.fixPoints[0]).toEqual({ pos: [0, 0], orientation: [0, 1] })
-    expect(baked.fixPoints[7]).toEqual({ pos: [7, 0], orientation: [0, 1] })
-    expect(baked.fixPoints[3].orientation).toBeNull()
+describe('setFixPosFree', () => {
+  it('toggles the free-position flag without mutating the input', () => {
+    const setup = base()
+    const free = setFixPosFree(setup, 0, 1, true)
+    expect(free.curves[0].fixPoints[1].posFree).toBe(true)
+    expect(setup.curves[0].fixPoints[1].posFree).toBeUndefined()
+    expect(setFixPosFree(free, 0, 1, false).curves[0].fixPoints[1].posFree).toBeUndefined()
   })
 })
 
-describe('appendBakedCurve', () => {
-  it('appends a fully-fixed baked curve without mutating the input setup', () => {
-    const setup: Setup = { curves: [curve(2, [[1, 0], null, [0, 1], null])] }
-    const poly = Array.from({ length: 10 }, (_, i): Vec2 => [i, i * 0.5])
-    const appended = appendBakedCurve(setup, poly, setup.curves[0])
-    expect(appended.curves).toHaveLength(2)
-    expect(appended.curves[1].n).toBe(0)
-    expect(appended.curves[1].fixPoints).toHaveLength(10)
-    expect(appended.curves[0].n).toBe(2)
-    expect(setup.curves).toHaveLength(1)
+describe('setResolution', () => {
+  it('updates the global resolution immutably', () => {
+    const setup = base()
+    expect(setResolution(setup, 0.5).resolution).toBe(0.5)
+    expect(setup.resolution).toBe(1)
+    expect(setResolution(setup, 1)).toBe(setup)
   })
 })

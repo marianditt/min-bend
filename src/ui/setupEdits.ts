@@ -1,5 +1,4 @@
 import type { Curve, FixPoint, Setup, Vec2 } from '../solver/types'
-import { freeSlotCount } from '../solver/curve'
 
 /** Deep clone a setup so edits stay immutable. */
 export function cloneSetup(setup: Setup): Setup {
@@ -13,7 +12,6 @@ export function createFixPoint(pos: Vec2): FixPoint {
 /** A new two-fix-point curve, offset horizontally so it does not overlap. */
 export function createCurve(offsetX: number): Curve {
   return {
-    n: 6,
     fixPoints: [createFixPoint([offsetX, 0]), createFixPoint([offsetX + 4, 0])],
     spans: [[]],
   }
@@ -32,16 +30,9 @@ export function removeCurve(setup: Setup, ci: number): Setup {
   return next
 }
 
-export function setCurveN(setup: Setup, ci: number, n: number): Setup {
-  const curve = setup.curves[ci]
-  if (!curve) return setup
-  const value = Math.max(0, Math.floor(n))
-  if (value === curve.n) return setup
-  const next = cloneSetup(setup)
-  const target = next.curves[ci]
-  target.n = value
-  target.spans = target.spans.map((span) => span.slice(0, value))
-  return next
+export function setResolution(setup: Setup, value: number): Setup {
+  if (value === setup.resolution) return setup
+  return { ...cloneSetup(setup), resolution: value }
 }
 
 export function setCurveTargetLength(setup: Setup, ci: number, value: number | null): Setup {
@@ -103,6 +94,16 @@ export function setFixOrientation(
   return next
 }
 
+export function setFixPosFree(setup: Setup, ci: number, pi: number, free: boolean): Setup {
+  const fp = setup.curves[ci]?.fixPoints[pi]
+  if (!fp || (fp.posFree === true) === free) return setup
+  const next = cloneSetup(setup)
+  const target = next.curves[ci].fixPoints[pi]
+  if (free) target.posFree = true
+  else delete target.posFree
+  return next
+}
+
 export function setFixOrientationComponent(
   setup: Setup,
   ci: number,
@@ -120,10 +121,8 @@ export function setFixOrientationComponent(
 }
 
 export function addFreePoint(setup: Setup, ci: number, si: number, p: Vec2): Setup {
-  const curve = setup.curves[ci]
-  const span = curve?.spans[si]
-  if (!curve || !span) return setup
-  if (span.length >= freeSlotCount(curve, si)) return setup
+  const span = setup.curves[ci]?.spans[si]
+  if (!span) return setup
   const next = cloneSetup(setup)
   next.curves[ci].spans[si].push([p[0], p[1]])
   return next
@@ -150,31 +149,5 @@ export function toggleCurveHidden(setup: Setup, ci: number): Setup {
   if (!curve) return setup
   const next = cloneSetup(setup)
   next.curves[ci].hidden = !curve.hidden
-  return next
-}
-
-/**
- * Turn a solved frame's curve polyline into a fresh, fully rigid curve: every
- * point becomes a fix point and `n` is 0, so rendering the result with no
- * interior points reproduces the copied shape exactly. Source fix points keep
- * their tangents; points that were interior in the source get no orientation.
- */
-export function curveFromPolyline(source: Curve, poly: Vec2[]): Curve {
-  const stride = Math.max(1, Math.floor(source.n) + 1)
-  const tangents = new Map<number, Vec2>()
-  source.fixPoints.forEach((fp, pi) => {
-    if (fp.orientation) tangents.set(pi * stride, fp.orientation)
-  })
-  const fixPoints: FixPoint[] = poly.map((p, i) => {
-    const tangent = tangents.get(i)
-    return { pos: [p[0], p[1]], orientation: tangent ? [tangent[0], tangent[1]] : null }
-  })
-  const spans = fixPoints.slice(0, -1).map((): Vec2[] => [])
-  return { fixPoints, n: 0, spans }
-}
-
-export function appendBakedCurve(setup: Setup, poly: Vec2[], source: Curve): Setup {
-  const next = cloneSetup(setup)
-  next.curves.push(curveFromPolyline(source, poly))
   return next
 }

@@ -1,46 +1,44 @@
 // Shared contract for the min-bend solver and renderer.
-// FROZEN: both the solver and the UI are built against these types.
 //
-// The system is a set of INDEPENDENT elastic curves. Each curve is a chain of
-// fix points with `n` interior points between every consecutive pair (a span).
-// A fix point has an optional tangent orientation that binds the interior point
-// adjacent to it on each side to lie on its ray (tangent continuity).
+// The system is a set of INDEPENDENT elastic curves. Each curve is one
+// continuous chain through its control points; between consecutive control
+// points (a span) the solver inserts as many interior points as the global
+// resolution requires.
 //
-// Extend only additively where possible.
+// Control point kinds (position x orientation):
+//   - fixed position, free orientation: the point stays put and the incoming
+//     and outgoing segments continue smoothly through it (the chain is one
+//     polyline, so there is a single orientation); at the curve ends it is free.
+//   - free position, fixed orientation: the solver may move the point; both
+//     adjacent segments lie on the given tangent line.
+//   - fixed position, fixed orientation: both constraints.
+//   - free position, free orientation: behaves like an interior point.
 
 export type Vec2 = [number, number]
 
-/**
- * An anchor of a curve: a required position with an optional tangent
- * orientation. A non-null orientation constrains the interior point adjacent to
- * this fix point in each neighbouring span to lie on this ray: the outgoing
- * span's first point and the incoming span's last point.
- */
 export interface FixPoint {
-  /** Fixed position. */
+  /** Position; the fixed position, or the initial guess when `posFree`. */
   pos: Vec2
   /** Tangent direction at this point, or null when free. Normalized by the solver. */
   orientation: Vec2 | null
+  /** When true the solver may move this point to minimize bend. */
+  posFree?: boolean
 }
 
 /**
- * A single elastic curve: two or more fix points, with `n` interior points
- * between each consecutive pair (span). `spans[i]` holds the user-placed FREE
- * interior points for the span between fixPoints[i] and fixPoints[i+1], in
- * order. Bound points (the interior point adjacent to an oriented fix point)
- * are derived by the solver and are not stored here.
+ * A single elastic curve: two or more control points. `spans[i]` holds optional
+ * user-placed guide points for the span between fixPoints[i] and fixPoints[i+1],
+ * in order; they only shape the initial layout.
  */
 export interface Curve {
   fixPoints: FixPoint[]
-  /** Interior points per span (integer >= 0), uniform across the curve. */
-  n: number
-  /** Per-span user free points; length should equal fixPoints.length - 1. */
+  /** Per-span user guide points; length should equal fixPoints.length - 1. */
   spans: Vec2[][]
   /**
    * Optional target total path length (sum of every segment length in the
-   * curve's concatenated polyline). When set, the solver targets the uniform
-   * per-segment length `targetLength / (spans * (n + 1))` instead of the
-   * geometric mean. null/absent = no constraint.
+   * curve's polyline). When set, the solver targets the uniform per-segment
+   * length `targetLength / segmentCount` instead of the mean. null/absent = no
+   * constraint.
    */
   targetLength?: number | null
   /**
@@ -51,9 +49,14 @@ export interface Curve {
   hidden?: boolean
 }
 
+/** Default value of {@link Setup.resolution}. */
+export const DEFAULT_RESOLUTION = 1
+
 /** The whole multi-curve setup authored by the user. */
 export interface Setup {
   curves: Curve[]
+  /** Nominal length of the line between neighboring interior points, shared by all curves. */
+  resolution: number
 }
 
 /** Tunable physics / solver constants (exposed under "Advanced"). */
@@ -72,8 +75,6 @@ export interface PhysicsConstants {
   settleFrames: number
   /** Safety cap on the number of iterations. */
   maxIter: number
-  /** Safety cap on the per-point net force (mass = 1, so this bounds acceleration). */
-  maxForce: number
 }
 
 export const DEFAULT_CONSTANTS: PhysicsConstants = {
@@ -84,7 +85,6 @@ export const DEFAULT_CONSTANTS: PhysicsConstants = {
   epsilon: 1e-4,
   settleFrames: 30,
   maxIter: 100000,
-  maxForce: 1000,
 }
 
 /**
@@ -106,6 +106,8 @@ export interface Frame {
 export interface FrameMeta {
   /** Number of points per curve, aligned with Frame.curves. */
   curvePointCounts: number[]
+  /** Index of every control point within its curve's polyline, aligned with Frame.curves. */
+  controlIndices: number[][]
   /** Number of points across all curves. */
   N: number
   /** Number of curves. */

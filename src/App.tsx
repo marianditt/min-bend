@@ -4,8 +4,8 @@ import { useSetupState } from './hooks/useSetupState'
 import { Player } from './player/Player'
 import { Sidebar } from './ui/Sidebar'
 import { PoseEditor } from './ui/PoseEditor'
-import { appendBakedCurve, toggleCurveHidden } from './ui/setupEdits'
-import type { Curve, PhysicsConstants, Setup, Vec2 } from './solver/types'
+import { toggleCurveHidden } from './ui/setupEdits'
+import type { PhysicsConstants, Setup } from './solver/types'
 import { formatEnergy } from './lib/format'
 
 function MarkIcon() {
@@ -62,14 +62,6 @@ function App() {
       compute(next, constants)
     },
     [compute],
-  )
-
-  const handleCreateFromFrame = useCallback(
-    (poly: Vec2[], source: Curve) => {
-      setup.update((s) => appendBakedCurve(s, poly, source))
-      setEditing(true)
-    },
-    [setup],
   )
 
   const hidden = useMemo(() => setup.setup.curves.map((curve) => !!curve.hidden), [setup.setup])
@@ -134,7 +126,6 @@ function App() {
                 frameSet={result as NonNullable<typeof result>}
                 hidden={hidden}
                 onToggleHidden={handleToggleHidden}
-                onCreateFromFrame={handleCreateFromFrame}
               />
             </div>
           ) : (

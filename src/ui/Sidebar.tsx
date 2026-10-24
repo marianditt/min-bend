@@ -10,12 +10,12 @@ import {
   moveFix,
   removeCurve,
   removeFixPoint,
-  setCurveN,
+  setResolution,
+  setFixPosFree,
   setCurveTargetLength,
   setFixOrientation,
   setFixOrientationComponent,
 } from './setupEdits'
-import { freeSlotCount } from '../solver/curve'
 import { previewPose } from '../solver/solve'
 import { formatEnergy } from '../lib/format'
 import './sidebar.css'
@@ -55,7 +55,6 @@ const CONSTANT_SPECS: ConstantSpec[] = [
   { key: 'epsilon', label: 'KE threshold ε', hint: 'stop below this', step: 1e-4, min: 0, wide: true },
   { key: 'settleFrames', label: 'Settle frames', hint: 'KE below ε for N frames', step: 1, integer: true, min: 1 },
   { key: 'maxIter', label: 'Max iterations', hint: 'safety cap', step: 500, integer: true, min: 1 },
-  { key: 'maxForce', label: 'Max force', hint: 'per-point force cap', step: 100, min: 0 },
 ]
 
 /** Returns a human message when the constants are unusable, else null. */
@@ -68,7 +67,6 @@ function constantProblem(c: PhysicsConstants): string | null {
     ['KE threshold', c.epsilon],
     ['Settle frames', c.settleFrames],
     ['Max iterations', c.maxIter],
-    ['Max force', c.maxForce],
   ]
   for (const [name, value] of named) {
     if (!Number.isFinite(value)) return `${name} must be a finite number.`
@@ -79,7 +77,6 @@ function constantProblem(c: PhysicsConstants): string | null {
   if (c.epsilon < 0) return 'KE threshold must be ≥ 0.'
   if (c.settleFrames < 1) return 'Settle frames must be ≥ 1.'
   if (c.maxIter < 1) return 'Max iterations must be ≥ 1.'
-  if (!(c.maxForce > 0)) return 'Max force must be > 0.'
   return null
 }
 
@@ -203,6 +200,17 @@ export function Sidebar({
           </div>
         </div>
 
+        <NumberField
+          label="Resolution (line length)"
+          hint="shared by all curves; the last line of a span may be shorter"
+          value={setup.resolution}
+          step={0.1}
+          min={0}
+          disabled={running}
+          error={byField.get('resolution') ?? null}
+          onChange={(value) => onEdit((s) => setResolution(s, value))}
+        />
+
         {setup.curves.map((curve, ci) => (
           <div
             className={`curve-card ${collapsed.has(ci) ? 'is-collapsed' : ''}`}
@@ -221,7 +229,7 @@ export function Sidebar({
                 <span className="curve-card__title">Curve {ci + 1}</span>
                 {collapsed.has(ci) ? (
                   <span className="curve-card__summary">
-                    {curve.fixPoints.length} fix · n {curve.n}
+                    {curve.fixPoints.length} control points
                     {curve.targetLength != null ? ` · L ${curve.targetLength}` : ''}
                   </span>
                 ) : null}
@@ -237,28 +245,12 @@ export function Sidebar({
               </button>
             </div>
 
-            <NumberField
-              label="Interior points per span (n)"
-              hint="between each fix-point pair"
-              value={curve.n}
-              step={1}
-              integer
-              min={0}
-              disabled={running}
-              error={byField.get(`n:${ci}`) ?? null}
-              onChange={(value) => onEdit((s) => setCurveN(s, ci, value))}
-            />
-
             <label className="switch">
               <input
                 type="checkbox"
                 checked={curve.targetLength != null}
-                disabled={running || curve.n === 0}
-                title={
-                  curve.n === 0
-                    ? 'Add interior points (n > 0) to constrain path length'
-                    : 'Aim the sum of all segment lengths at a target'
-                }
+                disabled={running}
+                title="Aim the sum of all segment lengths at a target"
                 onChange={(event) => {
                   const enabled = event.target.checked
                   onEdit((s) =>
@@ -294,7 +286,7 @@ export function Sidebar({
                   <div className="fix-item" key={pi}>
                     <div className="fix-item__head">
                       <span className="fix-item__label">
-                        Fix point {pi + 1} <em>{firstLabel}</em>
+                        Control point {pi + 1} <em>{firstLabel}</em>
                       </span>
                       <button
                         type="button"
@@ -307,7 +299,7 @@ export function Sidebar({
                       </button>
                     </div>
                     <VecInput
-                      label={`Fix point ${pi + 1} position`}
+                      label={fp.posFree ? `Control point ${pi + 1} initial position` : `Control point ${pi + 1} position`}
                       value={fp.pos}
                       disabled={running}
                       onChange={(axis, component) => onEdit((s) => moveFix(s, ci, pi, axis, component))}
@@ -315,6 +307,15 @@ export function Sidebar({
                     {byField.get(`fixPoint:${ci}:${pi}`) ? (
                       <p className="group__error" role="alert">{byField.get(`fixPoint:${ci}:${pi}`)}</p>
                     ) : null}
+                    <label className="switch">
+                      <input
+                        type="checkbox"
+                        checked={!fp.posFree}
+                        disabled={running}
+                        onChange={(event) => onEdit((s) => setFixPosFree(s, ci, pi, !event.target.checked))}
+                      />
+                      <span>Fix position</span>
+                    </label>
                     <label className="switch">
                       <input
                         type="checkbox"
@@ -358,12 +359,11 @@ export function Sidebar({
             {curve.spans.length > 0 ? (
               <ul className="span-list">
                 {curve.spans.map((span, si) => {
-                  const capacity = freeSlotCount(curve, si)
                   return (
                     <li className="span-row" key={si}>
                       <span className="span-row__label">Span {si + 1}</span>
                       <span className="span-row__count">
-                        {span.length} / {capacity} free
+                        {span.length} guide points
                       </span>
                       <button
                         type="button"
