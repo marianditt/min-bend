@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react'
 import { validateSetup } from '../solver/validate'
-import { DEFAULT_CONSTANTS, type PhysicsConstants, type Setup, type Vec2 } from '../solver/types'
+import { DEFAULT_CONSTANTS, type PhysicsConstants, type PointRef, type Setup, type Vec2 } from '../solver/types'
 import type { SolverStatus } from '../hooks/useSolver'
 import { NumberField } from './NumberField'
 import {
+  addConstraint,
   addCurve,
   addFixPoint,
   clearSpan,
   moveFix,
+  removeConstraint,
   removeCurve,
   removeFixPoint,
   setResolution,
@@ -16,6 +18,7 @@ import {
   setFixOrientation,
   setFixOrientationComponent,
 } from './setupEdits'
+import { constraintFor, pointLabel, resolveSetup } from '../solver/constraints'
 import { previewPose } from '../solver/solve'
 import { formatEnergy } from '../lib/format'
 import './sidebar.css'
@@ -109,6 +112,127 @@ function VecInput({
   )
 }
 
+type LinkKind = 'position' | 'orientation' | 'both'
+
+const KIND_OPTIONS: { value: LinkKind; label: string }[] = [
+  { value: 'position', label: 'Position' },
+  { value: 'orientation', label: 'Orientation' },
+  { value: 'both', label: 'Both' },
+]
+
+function ConstraintsSection({
+  setup,
+  running,
+  byField,
+  onEdit,
+}: {
+  setup: Setup
+  running: boolean
+  byField: Map<string, string>
+  onEdit: (mutator: (setup: Setup) => Setup) => void
+}) {
+  const options = useMemo(
+    () => setup.curves.flatMap((c, ci) => c.fixPoints.map((_, pi): PointRef => ({ curve: ci, point: pi }))),
+    [setup],
+  )
+  const key = (r: PointRef) => `${r.curve}:${r.point}`
+  const parse = (v: string): PointRef => {
+    const [curve, point] = v.split(':').map(Number)
+    return { curve, point }
+  }
+  const [target, setTarget] = useState('')
+  const [source, setSource] = useState('')
+  const [kind, setKind] = useState<LinkKind>('position')
+
+  const validKey = (v: string, fallback: string) => (options.some((o) => key(o) === v) ? v : fallback)
+  const t = validKey(target, options[0] ? key(options[0]) : '')
+  const sFallback = options.find((o) => key(o) !== t)
+  const sv = validKey(source, sFallback ? key(sFallback) : '')
+  const canLink = !running && t !== '' && sv !== '' && t !== sv
+
+  const link = () => {
+    const kinds = kind === 'both' ? (['position', 'orientation'] as const) : ([kind] as const)
+    onEdit((s) => kinds.reduce((acc, k) => addConstraint(acc, { kind: k, source: parse(sv), target: parse(t) }), s))
+  }
+
+  const list = setup.constraints ?? []
+
+  return (
+    <section className="sidebar__section">
+      <div className="sidebar__section-head">
+        <h2 className="sidebar__section-title">Constraints</h2>
+      </div>
+      <p className="constraints__intro">
+        Make a point copy the position and/or orientation of a point on another curve. The copied inputs are locked.
+      </p>
+
+      {list.length > 0 ? (
+        <ul className="constraint-list">
+          {list.map((c, i) => (
+            <li className="constraint-row" key={i}>
+              <span className={`chip chip--${c.kind}`}>{c.kind === 'position' ? 'Position' : 'Orientation'}</span>
+              <span className="constraint-row__text">
+                <strong>{pointLabel(c.target)}</strong>
+                <span className="constraint-row__arrow" aria-label="follows">←</span>
+                <strong>{pointLabel(c.source)}</strong>
+              </span>
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                disabled={running}
+                title="Remove constraint"
+                aria-label="Remove constraint"
+                onClick={() => onEdit((s) => removeConstraint(s, i))}
+              >
+                ✕
+              </button>
+              {byField.get(`constraint:${i}`) ? (
+                <p className="group__error" role="alert">{byField.get(`constraint:${i}`)}</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <div className="constraint-form">
+        <label className="select-field">
+          <span>Constrain</span>
+          <select value={t} disabled={running} onChange={(e) => setTarget(e.target.value)}>
+            {options.map((o) => (
+              <option key={key(o)} value={key(o)}>{pointLabel(o)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="select-field">
+          <span>to follow</span>
+          <select value={sv} disabled={running} onChange={(e) => setSource(e.target.value)}>
+            {options.map((o) => (
+              <option key={key(o)} value={key(o)} disabled={key(o) === t}>{pointLabel(o)}</option>
+            ))}
+          </select>
+        </label>
+        <div className="segmented" role="radiogroup" aria-label="Constrained property">
+          {KIND_OPTIONS.map((o) => (
+            <button
+              type="button"
+              key={o.value}
+              role="radio"
+              aria-checked={kind === o.value}
+              className={`segmented__item ${kind === o.value ? 'is-active' : ''}`}
+              onClick={() => setKind(o.value)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        <button type="button" className="btn btn--primary btn--block" disabled={!canLink} onClick={link}>
+          Add constraint
+        </button>
+      </div>
+    </section>
+  )
+}
+
 function WarningIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -162,6 +286,8 @@ export function Sidebar({
     for (const issue of issues) if (!map.has(issue.field)) map.set(issue.field, issue.message)
     return map
   }, [issues])
+
+  const resolved = useMemo(() => resolveSetup(setup).setup, [setup])
 
   const constProblem = useMemo(() => constantProblem(constants), [constants])
   const canCompute = issues.length === 0 && constProblem === null && !running
@@ -279,7 +405,11 @@ export function Sidebar({
             ) : null}
 
             <div className="fix-list">
-              {curve.fixPoints.map((fp, pi) => {
+              {curve.fixPoints.map((authoredFp, pi) => {
+                const fp = resolved.curves[ci]?.fixPoints[pi] ?? authoredFp
+                const ref: PointRef = { curve: ci, point: pi }
+                const posLink = constraintFor(setup, 'position', ref)
+                const oriLink = constraintFor(setup, 'orientation', ref)
                 const oriented = fp.orientation !== null
                 const firstLabel = pi === 0 ? 'start' : pi === curve.fixPoints.length - 1 ? 'end' : 'joint'
                 return (
@@ -301,17 +431,20 @@ export function Sidebar({
                     <VecInput
                       label={fp.posFree ? `Control point ${pi + 1} initial position` : `Control point ${pi + 1} position`}
                       value={fp.pos}
-                      disabled={running}
+                      disabled={running || !!posLink}
                       onChange={(axis, component) => onEdit((s) => moveFix(s, ci, pi, axis, component))}
                     />
                     {byField.get(`fixPoint:${ci}:${pi}`) ? (
                       <p className="group__error" role="alert">{byField.get(`fixPoint:${ci}:${pi}`)}</p>
                     ) : null}
+                    {posLink ? (
+                      <p className="link-note">🔗 Position follows {pointLabel(posLink.source)}</p>
+                    ) : null}
                     <label className="switch">
                       <input
                         type="checkbox"
                         checked={!fp.posFree}
-                        disabled={running}
+                        disabled={running || !!posLink}
                         onChange={(event) => onEdit((s) => setFixPosFree(s, ci, pi, !event.target.checked))}
                       />
                       <span>Fix position</span>
@@ -320,19 +453,22 @@ export function Sidebar({
                       <input
                         type="checkbox"
                         checked={oriented}
-                        disabled={running}
+                        disabled={running || !!oriLink}
                         onChange={(event) =>
                           onEdit((s) => setFixOrientation(s, ci, pi, event.target.checked ? [1, 0] : null))
                         }
                       />
                       <span>Fix orientation (tangent)</span>
                     </label>
+                    {oriLink ? (
+                      <p className="link-note">🔗 Orientation follows {pointLabel(oriLink.source)}</p>
+                    ) : null}
                     {oriented && fp.orientation ? (
                       <>
                         <VecInput
                           label={`Fix point ${pi + 1} orientation`}
                           value={fp.orientation}
-                          disabled={running}
+                          disabled={running || !!oriLink}
                           onChange={(axis, component) =>
                             onEdit((s) => setFixOrientationComponent(s, ci, pi, axis, component))
                           }
@@ -381,6 +517,8 @@ export function Sidebar({
           </div>
         ))}
       </section>
+
+      <ConstraintsSection setup={setup} running={running} byField={byField} onEdit={onEdit} />
 
       <section className="sidebar__section">
         <button

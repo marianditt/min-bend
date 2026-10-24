@@ -11,6 +11,7 @@ import {
 } from './forces'
 import { createFrameBuffer } from './frameBuffer'
 import { planCurve, safeResolution, sampleAlong, unitOrNull } from './curve'
+import { resolveSetup } from './constraints'
 import { ProgressTracker } from './progress'
 
 /** Thrown by solve() when shouldCancel() returns true. */
@@ -149,14 +150,15 @@ function makeProgressReporter(
 }
 
 export function solve(
-  setup: Setup,
+  authored: Setup,
   constants: PhysicsConstants = DEFAULT_CONSTANTS,
   options: SolveOptions = {},
 ): FrameSet {
-  const issues = validateSetup(setup)
+  const issues = validateSetup(authored)
   if (issues.length > 0) {
     throw new Error(`Invalid setup: ${issues.map((i) => i.message).join('; ')}`)
   }
+  const { setup, groups } = resolveSetup(authored)
 
   const { onProgress, shouldCancel, random = Math.random } = options
   const { h, epsilon, settleFrames, maxIter } = constants
@@ -165,6 +167,10 @@ export function solve(
   const curvePointCounts = chains.map((chain) => chain.pts.length)
   const controlIndices = chains.map((chain) => chain.controlIndices)
   const N = curvePointCounts.reduce((sum, count) => sum + count, 0)
+
+  const glued = groups.map((group) =>
+    group.map((ref) => ({ chain: chains[ref.curve], idx: chains[ref.curve].controlIndices[ref.point] })),
+  )
 
   const captureCurves = (): Vec2[][] => chains.map((chain) => chain.pts.map((p): Vec2 => [p[0], p[1]]))
 
@@ -202,8 +208,25 @@ export function solve(
         pts[k][1] += h * vel[k][1]
       }
 
-      enforceConstraints(pts, vel, model.constraints)
-      verifyFinite(pts, vel, accel)
+    }
+
+    // Points tied by a position constraint move as one: share their mean state.
+    for (const group of glued) {
+      let px = 0, py = 0, vx = 0, vy = 0
+      for (const { chain, idx } of group) {
+        px += chain.pts[idx][0]; py += chain.pts[idx][1]
+        vx += chain.vel[idx][0]; vy += chain.vel[idx][1]
+      }
+      const n = group.length
+      for (const { chain, idx } of group) {
+        chain.pts[idx][0] = px / n; chain.pts[idx][1] = py / n
+        chain.vel[idx][0] = vx / n; chain.vel[idx][1] = vy / n
+      }
+    }
+
+    for (const chain of chains) {
+      enforceConstraints(chain.pts, chain.vel, chain.model.constraints)
+      verifyFinite(chain.pts, chain.vel, chain.vel)
     }
 
     const ke = totalKineticEnergy(chains)
@@ -251,6 +274,7 @@ export function solve(
 }
 
 /** Deterministic (no-jitter) per-curve initial pose for the setup editor preview. */
-export function previewPose(setup: Setup): Vec2[][] {
+export function previewPose(authored: Setup): Vec2[][] {
+  const { setup } = resolveSetup(authored)
   return setup.curves.map((curve) => buildChain(curve, setup.resolution, () => 0.5).pts)
 }

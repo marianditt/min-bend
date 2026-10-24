@@ -460,3 +460,47 @@ describe('progress tracking', () => {
     }
   })
 })
+
+import { resolveSetup } from './constraints'
+
+describe('point constraints', () => {
+  const base = (): Setup => ({
+    resolution: 1,
+    curves: [
+      { fixPoints: [{ pos: [0, 0], orientation: [1, 0] }, { pos: [4, 0], orientation: [0, 1] }], spans: [[]] },
+      { fixPoints: [{ pos: [9, 9], orientation: null, posFree: true }, { pos: [8, 3], orientation: null }], spans: [[]] },
+    ],
+  })
+
+  it('copies fixed position and orientation to the target', () => {
+    const s = base()
+    s.constraints = [
+      { kind: 'position', source: { curve: 0, point: 1 }, target: { curve: 1, point: 0 } },
+      { kind: 'orientation', source: { curve: 0, point: 1 }, target: { curve: 1, point: 0 } },
+    ]
+    const r = resolveSetup(s).setup.curves[1].fixPoints[0]
+    expect(r.pos).toEqual([4, 0])
+    expect(r.posFree).toBeUndefined()
+    expect(r.orientation).toEqual([0, 1])
+  })
+
+  it('keeps free linked points together while solving', () => {
+    const s = base()
+    s.curves[0].fixPoints[1] = { pos: [4, 1], orientation: null, posFree: true }
+    s.constraints = [{ kind: 'position', source: { curve: 0, point: 1 }, target: { curve: 1, point: 0 } }]
+    const fs = solve(s)
+    const last = fs.frames[fs.frames.length - 1]
+    const a = last.curves[0][fs.meta.controlIndices[0][1]]
+    const b = last.curves[1][fs.meta.controlIndices[1][0]]
+    expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThan(1e-9)
+  })
+
+  it('rejects loops and duplicate targets', () => {
+    const s = base()
+    s.constraints = [
+      { kind: 'position', source: { curve: 0, point: 1 }, target: { curve: 1, point: 0 } },
+      { kind: 'position', source: { curve: 1, point: 0 }, target: { curve: 0, point: 1 } },
+    ]
+    expect(validateSetup(s).length).toBeGreaterThan(0)
+  })
+})

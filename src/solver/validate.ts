@@ -1,4 +1,5 @@
 import { EPS_STABILIZE, type Setup } from './types'
+import { constraintProblems } from './constraints'
 import { MAX_SEGMENTS_PER_SPAN, planSpan } from './curve'
 
 /** A single, field-targeted validation problem. */
@@ -43,6 +44,10 @@ export function validateSetup(setup: Setup): ValidationIssue[] {
   if (!resolutionOk) {
     issues.push({ field: 'resolution', message: 'Resolution (line length) must be a positive number.' })
   }
+
+  constraintProblems(setup).forEach((p) => {
+    issues.push({ field: `constraint:${p.index}`, message: p.message })
+  })
 
   curves.forEach((curve, ci) => {
     const label = `Curve ${ci + 1}`
