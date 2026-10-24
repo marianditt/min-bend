@@ -1,8 +1,10 @@
 import {
   DEFAULT_RESOLUTION,
+  type Constraint,
   type Curve,
   type FixPoint,
   type PhysicsConstants,
+  type PointRef,
   type Setup,
   type Vec2,
 } from '../solver/types'
@@ -93,7 +95,27 @@ function sanitizeSetup(value: unknown): Setup | null {
     curves.push(curve)
   }
   const resolution = isFiniteNumber(value.resolution) && value.resolution > 0 ? value.resolution : DEFAULT_RESOLUTION
-  return { curves, resolution }
+  const setup: Setup = { curves, resolution }
+  const constraints = sanitizeConstraints(value.constraints)
+  if (constraints.length > 0) setup.constraints = constraints
+  return setup
+}
+
+function sanitizeRef(value: unknown): PointRef | null {
+  if (!isRecord(value) || !Number.isInteger(value.curve) || !Number.isInteger(value.point)) return null
+  return { curve: value.curve as number, point: value.point as number }
+}
+
+function sanitizeConstraints(value: unknown): Constraint[] {
+  if (!Array.isArray(value)) return []
+  const out: Constraint[] = []
+  for (const raw of value) {
+    if (!isRecord(raw) || (raw.kind !== 'position' && raw.kind !== 'orientation')) continue
+    const source = sanitizeRef(raw.source)
+    const target = sanitizeRef(raw.target)
+    if (source && target) out.push({ kind: raw.kind, source, target })
+  }
+  return out
 }
 
 function sanitizeConstants(value: unknown): PhysicsConstants | null {

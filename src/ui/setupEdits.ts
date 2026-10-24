@@ -1,4 +1,5 @@
-import type { Curve, FixPoint, Setup, Vec2 } from '../solver/types'
+import type { Constraint, Curve, FixPoint, PointRef, Setup, Vec2 } from '../solver/types'
+import { constraintProblems } from '../solver/constraints'
 
 /** Deep clone a setup so edits stay immutable. */
 export function cloneSetup(setup: Setup): Setup {
@@ -27,6 +28,7 @@ export function removeCurve(setup: Setup, ci: number): Setup {
   if (setup.curves.length <= 1) return setup
   const next = cloneSetup(setup)
   next.curves.splice(ci, 1)
+  remapConstraints(next, (r) => (r.curve === ci ? null : { curve: r.curve > ci ? r.curve - 1 : r.curve, point: r.point }))
   return next
 }
 
@@ -70,6 +72,9 @@ export function removeFixPoint(setup: Setup, ci: number, pi: number): Setup {
   const target = next.curves[ci]
   target.fixPoints.splice(pi, 1)
   target.spans.splice(Math.min(pi, target.spans.length - 1), 1)
+  remapConstraints(next, (r) =>
+    r.curve !== ci ? r : r.point === pi ? null : { curve: ci, point: r.point > pi ? r.point - 1 : r.point },
+  )
   return next
 }
 
@@ -149,5 +154,40 @@ export function toggleCurveHidden(setup: Setup, ci: number): Setup {
   if (!curve) return setup
   const next = cloneSetup(setup)
   next.curves[ci].hidden = !curve.hidden
+  return next
+}
+
+/** Rewrites constraint references in place; constraints touching a dropped point (null) are removed. */
+function remapConstraints(setup: Setup, map: (ref: PointRef) => PointRef | null): void {
+  if (!setup.constraints) return
+  const kept: Constraint[] = []
+  for (const c of setup.constraints) {
+    const source = map(c.source)
+    const target = map(c.target)
+    if (source && target) kept.push({ kind: c.kind, source, target })
+  }
+  if (kept.length > 0) setup.constraints = kept
+  else delete setup.constraints
+}
+
+/**
+ * Constrains `target` to follow `source` for the given property. Replaces an
+ * existing constraint of the same kind on the target; ignored when invalid
+ * (self reference or loop).
+ */
+export function addConstraint(setup: Setup, constraint: Constraint): Setup {
+  const next = cloneSetup(setup)
+  const rest = (next.constraints ?? []).filter(
+    (c) => !(c.kind === constraint.kind && c.target.curve === constraint.target.curve && c.target.point === constraint.target.point),
+  )
+  next.constraints = [...rest, constraint]
+  return constraintProblems(next).length > 0 ? setup : next
+}
+
+export function removeConstraint(setup: Setup, index: number): Setup {
+  if (!setup.constraints?.[index]) return setup
+  const next = cloneSetup(setup)
+  next.constraints?.splice(index, 1)
+  if (next.constraints?.length === 0) delete next.constraints
   return next
 }

@@ -52,9 +52,31 @@ export interface Curve {
 /** Default value of {@link Setup.resolution}. */
 export const DEFAULT_RESOLUTION = 1
 
+/** Addresses one control point: curve index and control point index. */
+export interface PointRef {
+  curve: number
+  point: number
+}
+
+/**
+ * Ties one property of the `target` control point to the `source` control
+ * point (possibly on another curve). The target's own input for that property
+ * is disabled; it takes the source's value.
+ *  - position: a fixed source pins the target to the same place; if the source
+ *    is free the solver keeps both points glued together.
+ *  - orientation: the target copies the source's tangent.
+ */
+export interface Constraint {
+  kind: 'position' | 'orientation'
+  source: PointRef
+  target: PointRef
+}
+
 /** The whole multi-curve setup authored by the user. */
 export interface Setup {
   curves: Curve[]
+  /** Links between control points of (possibly different) curves. */
+  constraints?: Constraint[]
   /** Nominal length of the line between neighboring interior points, shared by all curves. */
   resolution: number
 }
