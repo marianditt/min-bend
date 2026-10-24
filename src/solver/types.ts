@@ -36,9 +36,8 @@ export interface Curve {
   spans: Vec2[][]
   /**
    * Optional target total path length (sum of every segment length in the
-   * curve's polyline). When set, the solver targets the uniform per-segment
-   * length `targetLength / segmentCount` instead of the mean. null/absent = no
-   * constraint.
+   * curve's polyline). When set, a uniform tension along the whole curve pulls
+   * the total length toward it. null/absent = the length is free.
    */
   targetLength?: number | null
   /**
@@ -83,8 +82,6 @@ export interface Setup {
 
 /** Tunable physics / solver constants (exposed under "Advanced"). */
 export interface PhysicsConstants {
-  /** Segment-length force stiffness. */
-  kLen: number
   /** Bend-minimization force stiffness. */
   kBend: number
   /** Friction coefficient (force = -gamma * v). */
@@ -100,7 +97,6 @@ export interface PhysicsConstants {
 }
 
 export const DEFAULT_CONSTANTS: PhysicsConstants = {
-  kLen: 100,
   kBend: 1,
   gamma: 0.1,
   h: 0.01,
@@ -123,15 +119,17 @@ export interface Frame {
   ke: number
   /** Per-curve point polylines (fix points + interior points), in curve order. */
   curves: Vec2[][]
+  /**
+   * Index of every control point within its curve's polyline, aligned with
+   * `curves`. The point count changes as segments shrink and grow, so this is
+   * tracked per frame.
+   */
+  controlIndices: number[][]
 }
 
 export interface FrameMeta {
-  /** Number of points per curve, aligned with Frame.curves. */
-  curvePointCounts: number[]
-  /** Index of every control point within its curve's polyline, aligned with Frame.curves. */
-  controlIndices: number[][]
-  /** Number of points across all curves. */
-  N: number
+  /** Largest number of points (all curves together) in any frame. */
+  maxPoints: number
   /** Number of curves. */
   curveCount: number
   input: Setup

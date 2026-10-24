@@ -61,7 +61,7 @@ function draw(
     const color = curveColor(ci, dark)
     const screen: [number, number][] = pts.map(([x, y]) => [project.toX(x), project.toY(y)])
     const curve = inputCurves[ci]
-    const control = frameSet.meta.controlIndices?.[ci] ?? []
+    const control = frames[index].controlIndices?.[ci] ?? []
     const controlSet = new Set(control)
 
     if (screen.length >= 2) {

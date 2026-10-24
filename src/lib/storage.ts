@@ -1,4 +1,5 @@
 import {
+  DEFAULT_CONSTANTS,
   DEFAULT_RESOLUTION,
   type Constraint,
   type Curve,
@@ -120,26 +121,18 @@ function sanitizeConstraints(value: unknown): Constraint[] {
 
 function sanitizeConstants(value: unknown): PhysicsConstants | null {
   if (!isRecord(value)) return null
-  const c = value
-  if (
-    !isFiniteNumber(c.kLen) ||
-    !isFiniteNumber(c.kBend) ||
-    !isFiniteNumber(c.gamma) ||
-    !isFiniteNumber(c.h) ||
-    !isFiniteNumber(c.epsilon) ||
-    !isFiniteNumber(c.settleFrames) ||
-    !isFiniteNumber(c.maxIter)
-  ) {
-    return null
+  // Unknown legacy keys (e.g. kLen) are dropped; missing or invalid ones fall back to defaults.
+  const pick = (key: keyof PhysicsConstants): number => {
+    const v = value[key]
+    return isFiniteNumber(v) ? v : DEFAULT_CONSTANTS[key]
   }
   return {
-    kLen: c.kLen,
-    kBend: c.kBend,
-    gamma: c.gamma,
-    h: c.h,
-    epsilon: c.epsilon,
-    settleFrames: c.settleFrames,
-    maxIter: c.maxIter,
+    kBend: pick('kBend'),
+    gamma: pick('gamma'),
+    h: pick('h'),
+    epsilon: pick('epsilon'),
+    settleFrames: pick('settleFrames'),
+    maxIter: pick('maxIter'),
   }
 }
 
@@ -206,5 +199,14 @@ export function saveState(state: PersistedState): void {
     )
   } catch {
     /* best-effort persistence */
+  }
+}
+
+/** Forget the saved setup (used by "Start over"). Never throws. */
+export function clearState(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    // storage unavailable; nothing to clear
   }
 }

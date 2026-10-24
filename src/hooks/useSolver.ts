@@ -36,6 +36,10 @@ const INITIAL_STATE: SolverState = {
 /** Grace period for a cooperative worker to observe a cancel message. */
 const CANCEL_GRACE_MS = 250
 
+function describeError(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback
+}
+
 /** Accept either a [0,1] fraction or a [0,100] percentage. */
 function normalizeProgress(raw: number): number {
   if (!Number.isFinite(raw)) return 0
@@ -69,6 +73,7 @@ export function useSolver(): SolverController {
     if (!worker) return
     worker.onmessage = null
     worker.onerror = null
+    worker.onmessageerror = null
     worker.terminate()
     workerRef.current = null
   }, [])
@@ -102,10 +107,13 @@ export function useSolver(): SolverController {
       generationRef.current = generation
       setState({ ...INITIAL_STATE, status: 'running' })
 
-      const worker = new Worker(
-        new URL('../solver/worker.ts', import.meta.url),
-        { type: 'module' },
-      )
+      let worker: Worker
+      try {
+        worker = new Worker(new URL('../solver/worker.ts', import.meta.url), { type: 'module' })
+      } catch (err) {
+        setState({ ...INITIAL_STATE, status: 'error', error: describeError(err, 'Could not start the solver.') })
+        return
+      }
       workerRef.current = worker
 
       worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
@@ -159,8 +167,19 @@ export function useSolver(): SolverController {
         teardown()
       }
 
-      const request: WorkerRequest = { type: 'solve', input, constants }
-      worker.postMessage(request)
+      worker.onmessageerror = () => {
+        if (generation !== generationRef.current) return
+        setState({ ...INITIAL_STATE, status: 'error', error: 'The solver sent an unreadable answer.' })
+        teardown()
+      }
+
+      try {
+        const request: WorkerRequest = { type: 'solve', input, constants }
+        worker.postMessage(request)
+      } catch (err) {
+        setState({ ...INITIAL_STATE, status: 'error', error: describeError(err, 'Could not send the setup to the solver.') })
+        teardown()
+      }
     },
     [clearCancelTimer, teardown],
   )

@@ -21,10 +21,7 @@ export interface SpanPlan {
   segments: number
   /** True when the requested resolution would exceed MAX_SEGMENTS_PER_SPAN. */
   overflow: boolean
-  /**
-   * Initial length of each segment: `resolution` for all but the last, which
-   * takes the remainder (and so may be shorter). Short spans use uniform lengths.
-   */
+  /** Initial length of each segment (uniform; they shrink and grow freely during the solve). */
   lengths: number[]
 }
 
@@ -114,13 +111,7 @@ export function planSpan(curve: Curve, si: number, resolution: number): SpanPlan
   const overflow = rawSegments > MAX_SEGMENTS_PER_SPAN
   const segments = Math.min(rawSegments, MAX_SEGMENTS_PER_SPAN)
 
-  let lengths: number[]
-  if (!overflow && ratio > MIN_SEGMENTS - 1) {
-    lengths = new Array(segments).fill(res)
-    lengths[segments - 1] = length - (segments - 1) * res
-  } else {
-    lengths = new Array(segments).fill(length / segments)
-  }
+  const lengths: number[] = new Array(segments).fill(length / segments)
 
   return { polyline, length, segments, overflow, lengths }
 }

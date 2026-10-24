@@ -1,6 +1,6 @@
 import type { Curve, Frame, FrameMeta, FrameSet, PhysicsConstants, Setup, Vec2 } from './types'
 import { DEFAULT_CONSTANTS } from './types'
-import { validateSetup } from './validate'
+import { validateConstants, validateSetup } from './validate'
 import {
   type ChainModel,
   type PointConstraint,
@@ -11,6 +11,7 @@ import {
 } from './forces'
 import { createFrameBuffer } from './frameBuffer'
 import { planCurve, safeResolution, sampleAlong, unitOrNull } from './curve'
+import { equalizeSegments, remesh } from './remesh'
 import { resolveSetup } from './constraints'
 import { ProgressTracker } from './progress'
 
@@ -32,12 +33,42 @@ export interface SolveOptions {
 /** Initial-pose jitter amplitude, as a fraction of the segment spacing. */
 const INIT_JITTER = 0.15
 
+/** How one control point behaves; independent of where it sits in the polyline. */
+interface ControlSpec {
+  movable: boolean
+  dir: Vec2 | null
+  collinear: boolean
+}
+
 /** One curve as a single polyline with its constraint model. */
 interface ChainState {
   pts: Vec2[]
   vel: Vec2[]
   model: ChainModel
+  controls: ControlSpec[]
+  targetLength: number | null
+  /** Replaced (never mutated) whenever the point count changes. */
   controlIndices: number[]
+}
+
+/** Per-step displacement cap, as a fraction of the resolution; keeps a stiff transient from exploding. */
+const MAX_STEP_FRACTION = 0.25
+
+function buildModel(
+  total: number,
+  controls: ControlSpec[],
+  controlIndices: number[],
+  targetLength: number | null,
+): ChainModel {
+  const movable: boolean[] = new Array(total).fill(true)
+  const constraints: PointConstraint[] = []
+  controls.forEach((c, j) => {
+    const index = controlIndices[j]
+    if (!c.movable) movable[index] = false
+    if (c.dir) constraints.push({ index, dir: c.dir, collinear: false })
+    else if (c.collinear) constraints.push({ index, dir: null, collinear: true })
+  })
+  return { movable, targetLength, constraints }
 }
 
 function buildChain(curve: Curve, resolution: number, random: () => number): ChainState {
@@ -79,34 +110,24 @@ function buildChain(curve: Curve, resolution: number, random: () => number): Cha
     for (let k = from; k < sampled.length; k++) pts.push([sampled[k][0], sampled[k][1]])
   })
 
-  const total = pts.length
-  const movable: boolean[] = new Array(total).fill(true)
-  const constraints: PointConstraint[] = []
   const lastControl = curve.fixPoints.length - 1
-  curve.fixPoints.forEach((fp, j) => {
-    const idx = plan.controlIndices[j]
+  const controls: ControlSpec[] = curve.fixPoints.map((fp, j) => {
     const posFree = fp.posFree === true
-    if (!posFree) movable[idx] = false
     const dir = unitOrNull(fp.orientation)
-    if (dir) constraints.push({ index: idx, dir, collinear: false })
-    else if (!posFree && j > 0 && j < lastControl) constraints.push({ index: idx, dir: null, collinear: true })
+    return {
+      movable: posFree,
+      dir,
+      collinear: !dir && !posFree && j > 0 && j < lastControl,
+    }
   })
 
   const target = curve.targetLength
-  const segmentCount = plan.segmentCount
-  const targets: number[] = []
-  if (target != null && Number.isFinite(target) && segmentCount > 0) {
-    for (let k = 0; k < segmentCount; k++) {
-      targets.push(target / segmentCount)
-    }
-  } else {
-    for (const span of plan.spans) targets.push(...span.lengths)
-  }
+  const targetLength = target != null && Number.isFinite(target) && target > 0 ? target : null
 
-  const model: ChainModel = { movable, targets, constraints }
+  const model = buildModel(pts.length, controls, plan.controlIndices, targetLength)
   const vel: Vec2[] = pts.map(() => [0, 0])
-  enforceConstraints(pts, vel, constraints)
-  return { pts, vel, model, controlIndices: plan.controlIndices }
+  enforceConstraints(pts, vel, model.constraints)
+  return { pts, vel, model, controls, targetLength, controlIndices: plan.controlIndices }
 }
 
 function totalKineticEnergy(chains: ChainState[]): number {
@@ -158,25 +179,25 @@ export function solve(
   if (issues.length > 0) {
     throw new Error(`Invalid setup: ${issues.map((i) => i.message).join('; ')}`)
   }
+  const constantsIssue = validateConstants(constants)
+  if (constantsIssue) throw new Error(constantsIssue)
   const { setup, groups } = resolveSetup(authored)
 
   const { onProgress, shouldCancel, random = Math.random } = options
   const { h, epsilon, settleFrames, maxIter } = constants
 
   const chains = setup.curves.map((curve) => buildChain(curve, setup.resolution, random))
-  const curvePointCounts = chains.map((chain) => chain.pts.length)
-  const controlIndices = chains.map((chain) => chain.controlIndices)
-  const N = curvePointCounts.reduce((sum, count) => sum + count, 0)
-
-  const glued = groups.map((group) =>
-    group.map((ref) => ({ chain: chains[ref.curve], idx: chains[ref.curve].controlIndices[ref.point] })),
-  )
+  const res = safeResolution(setup.resolution)
+  const maxStep = MAX_STEP_FRACTION * res
+  const countPoints = (): number => chains.reduce((sum, chain) => sum + chain.pts.length, 0)
+  let maxPoints = countPoints()
 
   const captureCurves = (): Vec2[][] => chains.map((chain) => chain.pts.map((p): Vec2 => [p[0], p[1]]))
+  const captureControls = (): number[][] => chains.map((chain) => chain.controlIndices)
 
   const buffer = createFrameBuffer()
   const initialKe = totalKineticEnergy(chains)
-  buffer.add({ i: 0, ke: initialKe, curves: captureCurves() })
+  buffer.add({ i: 0, ke: initialKe, curves: captureCurves(), controlIndices: captureControls() })
 
   const { report, finalize } = makeProgressReporter(
     onProgress,
@@ -204,6 +225,11 @@ export function solve(
         if (!model.movable[k]) continue
         vel[k][0] += h * accel[k][0]
         vel[k][1] += h * accel[k][1]
+        const step = h * Math.hypot(vel[k][0], vel[k][1])
+        if (step > maxStep) {
+          vel[k][0] *= maxStep / step
+          vel[k][1] *= maxStep / step
+        }
         pts[k][0] += h * vel[k][0]
         pts[k][1] += h * vel[k][1]
       }
@@ -211,29 +237,40 @@ export function solve(
     }
 
     // Points tied by a position constraint move as one: share their mean state.
-    for (const group of glued) {
+    for (const group of groups) {
+      const members = group.map((ref) => ({
+        chain: chains[ref.curve],
+        idx: chains[ref.curve].controlIndices[ref.point],
+      }))
       let px = 0, py = 0, vx = 0, vy = 0
-      for (const { chain, idx } of group) {
+      for (const { chain, idx } of members) {
         px += chain.pts[idx][0]; py += chain.pts[idx][1]
         vx += chain.vel[idx][0]; vy += chain.vel[idx][1]
       }
-      const n = group.length
-      for (const { chain, idx } of group) {
+      const n = members.length
+      for (const { chain, idx } of members) {
         chain.pts[idx][0] = px / n; chain.pts[idx][1] = py / n
         chain.vel[idx][0] = vx / n; chain.vel[idx][1] = vy / n
       }
     }
 
     for (const chain of chains) {
+      const indices = remesh(chain.pts, chain.vel, chain.controlIndices, res)
+      if (indices !== chain.controlIndices) {
+        chain.controlIndices = indices
+        chain.model = buildModel(chain.pts.length, chain.controls, indices, chain.targetLength)
+      }
+      equalizeSegments(chain.pts, chain.vel, chain.controlIndices)
       enforceConstraints(chain.pts, chain.vel, chain.model.constraints)
       verifyFinite(chain.pts, chain.vel, chain.vel)
     }
+    maxPoints = Math.max(maxPoints, countPoints())
 
     const ke = totalKineticEnergy(chains)
     if (ke < epsilon) settleStreak += 1
     else settleStreak = 0
 
-    buffer.add({ i, ke, curves: captureCurves() })
+    buffer.add({ i, ke, curves: captureCurves(), controlIndices: captureControls() })
     lastIter = i
     lastKe = ke
 
@@ -251,13 +288,11 @@ export function solve(
 
   finalize(lastIter, lastKe)
 
-  const last: Frame = { i: lastIter, ke: lastKe, curves: captureCurves() }
+  const last: Frame = { i: lastIter, ke: lastKe, curves: captureCurves(), controlIndices: captureControls() }
   const frames = buffer.finish(last)
 
   const meta: FrameMeta = {
-    curvePointCounts,
-    controlIndices,
-    N,
+    maxPoints,
     curveCount: chains.length,
     input: setup,
     constants,
@@ -273,8 +308,33 @@ export function solve(
   }
 }
 
-/** Deterministic (no-jitter) per-curve initial pose for the setup editor preview. */
+export interface PreviewLayout {
+  /** Initial polyline of every curve. */
+  curves: Vec2[][]
+  /** Control point indices into each polyline (always consistent with `curves`). */
+  controlIndices: number[][]
+}
+
+const EMPTY_LAYOUT: PreviewLayout = { curves: [], controlIndices: [] }
+
+/**
+ * Deterministic (no-jitter) initial layout for the editor preview. Never
+ * throws: a setup that cannot be laid out yields an empty layout, so editing
+ * half-typed values can not take the UI down.
+ */
+export function previewLayout(authored: Setup): PreviewLayout {
+  try {
+    const { setup } = resolveSetup(authored)
+    const chains = setup.curves.map((curve) => buildChain(curve, setup.resolution, () => 0.5))
+    const finite = chains.every((c) => c.pts.every((p) => Number.isFinite(p[0]) && Number.isFinite(p[1])))
+    if (!finite) return EMPTY_LAYOUT
+    return { curves: chains.map((c) => c.pts), controlIndices: chains.map((c) => c.controlIndices) }
+  } catch {
+    return EMPTY_LAYOUT
+  }
+}
+
+/** Initial polylines only; see {@link previewLayout}. */
 export function previewPose(authored: Setup): Vec2[][] {
-  const { setup } = resolveSetup(authored)
-  return setup.curves.map((curve) => buildChain(curve, setup.resolution, () => 0.5).pts)
+  return previewLayout(authored).curves
 }

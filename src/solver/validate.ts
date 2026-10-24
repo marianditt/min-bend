@@ -1,4 +1,4 @@
-import { EPS_STABILIZE, type Setup } from './types'
+import { EPS_STABILIZE, type PhysicsConstants, type Setup } from './types'
 import { constraintProblems } from './constraints'
 import { MAX_SEGMENTS_PER_SPAN, planSpan } from './curve'
 
@@ -116,4 +116,26 @@ export function validateSetup(setup: Setup): ValidationIssue[] {
   })
 
   return issues
+}
+
+/** Returns a human message when the physics constants are unusable, else null. */
+export function validateConstants(c: PhysicsConstants): string | null {
+  const named: [string, number][] = [
+    ['Bend stiffness', c?.kBend],
+    ['Friction', c?.gamma],
+    ['Step size', c?.h],
+    ['Rest threshold', c?.epsilon],
+    ['Settle frames', c?.settleFrames],
+    ['Max iterations', c?.maxIter],
+  ]
+  for (const [name, value] of named) {
+    if (!Number.isFinite(value)) return `${name} must be a finite number.`
+  }
+  if (c.kBend < 0) return 'Bend stiffness must be ≥ 0.'
+  if (c.gamma < 0) return 'Friction must be ≥ 0.'
+  if (!(c.h > 0)) return 'Step size must be > 0.'
+  if (c.epsilon < 0) return 'Rest threshold must be ≥ 0.'
+  if (c.settleFrames < 1) return 'Settle frames must be ≥ 1.'
+  if (c.maxIter < 1) return 'Max iterations must be ≥ 1.'
+  return null
 }
