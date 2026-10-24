@@ -18,7 +18,7 @@ interface ConstantSpec {
 
 const CONSTANT_SPECS: ConstantSpec[] = [
   { key: 'kBend', label: 'Bend stiffness', hint: 'how strongly bends are punished', step: 0.1, min: 0 },
-  { key: 'gamma', label: 'Friction', hint: 'damps motion', step: 0.05, min: 0 },
+  { key: 'gamma', label: 'Energy drain', hint: 'how fast motion dies out', step: 0.05, min: 0 },
   { key: 'h', label: 'Time step', hint: 'smaller = slower but safer', step: 0.005, min: 0 },
   { key: 'epsilon', label: 'Rest threshold', hint: 'stop when motion is below this', step: 1e-4, min: 0 },
   { key: 'settleFrames', label: 'Rest steps', hint: 'steps below the threshold before stopping', step: 1, integer: true, min: 1 },
@@ -55,7 +55,7 @@ export function ProgressRing({ fraction, iteration }: { fraction: number; iterat
   )
 }
 
-const FIELD_STEP: Record<string, StepId> = { curve: 'points', fix: 'points', free: 'sketch', resolution: 'run', constraint: 'rules' }
+const FIELD_STEP: Record<string, StepId> = { curve: 'points', fix: 'points', free: 'sketch', resolution: 'run', constraint: 'points', targetLength: 'points', flatness: 'points' }
 
 function stepForField(field: string): StepId {
   return FIELD_STEP[field.split(':')[0]] ?? 'points'
@@ -107,7 +107,7 @@ export function RunStep({ api, solver, onRun, onCancel, onGoto }: RunStepProps) 
           </li>
           <li>
             <span>{fixedLengths} fixed {fixedLengths === 1 ? 'length' : 'lengths'}, {links} {links === 1 ? 'link' : 'links'}</span>
-            <button type="button" className="btn btn--sm btn--ghost" onClick={() => onGoto('rules')}>Edit</button>
+            <button type="button" className="btn btn--sm btn--ghost" onClick={() => onGoto('points')}>Edit</button>
           </li>
         </ul>
       </section>

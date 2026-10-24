@@ -60,6 +60,11 @@ export function validateSetup(setup: Setup): ValidationIssue[] {
       })
     }
 
+    const flat = curve.flatness
+    if (flat !== undefined && !(Number.isFinite(flat) && flat >= 0 && flat <= 1)) {
+      issues.push({ field: `flatness:${ci}`, message: `${label}: the shortness/flatness balance must be between 0 and 1.` })
+    }
+
     if (!Array.isArray(curve.fixPoints) || curve.fixPoints.length < 2) {
       issues.push({ field: `fixPoints:${ci}`, message: `${label}: needs at least 2 fix points.` })
       return
@@ -122,7 +127,7 @@ export function validateSetup(setup: Setup): ValidationIssue[] {
 export function validateConstants(c: PhysicsConstants): string | null {
   const named: [string, number][] = [
     ['Bend stiffness', c?.kBend],
-    ['Friction', c?.gamma],
+    ['Energy drain', c?.gamma],
     ['Step size', c?.h],
     ['Rest threshold', c?.epsilon],
     ['Settle frames', c?.settleFrames],
@@ -132,7 +137,7 @@ export function validateConstants(c: PhysicsConstants): string | null {
     if (!Number.isFinite(value)) return `${name} must be a finite number.`
   }
   if (c.kBend < 0) return 'Bend stiffness must be ≥ 0.'
-  if (c.gamma < 0) return 'Friction must be ≥ 0.'
+  if (c.gamma < 0) return 'Energy drain must be ≥ 0.'
   if (!(c.h > 0)) return 'Step size must be > 0.'
   if (c.epsilon < 0) return 'Rest threshold must be ≥ 0.'
   if (c.settleFrames < 1) return 'Settle frames must be ≥ 1.'

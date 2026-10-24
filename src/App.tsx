@@ -3,12 +3,11 @@ import { useSolver } from './hooks/useSolver'
 import { useSetupState } from './hooks/useSetupState'
 import { ErrorBoundary } from './ui/ErrorBoundary'
 import { PointsStep } from './wizard/PointsStep'
-import { RulesStep } from './wizard/RulesStep'
 import { SketchStep } from './wizard/SketchStep'
 import { RunStep } from './wizard/RunStep'
 import { ResultStep } from './wizard/ResultStep'
-import { STEPS, type PointSelection, type StepId } from './wizard/types'
-import type { PointId, Setup } from './solver/types'
+import { STEPS, type StepId } from './wizard/types'
+import type { Setup } from './solver/types'
 import './wizard/wizard.css'
 
 /** Setup identity for staleness checks; visibility is display-only. */
@@ -27,7 +26,6 @@ function App() {
   const [stepId, setStepId] = useState<StepId>('points')
   const [playerKey, setPlayerKey] = useState(0)
   const [ranWith, setRanWith] = useState<string | null>(null)
-  const [selected, setSelected] = useState<PointSelection | null>(null)
   const topRef = useRef<HTMLElement>(null)
 
   const stepIndex = STEPS.findIndex((s) => s.id === stepId)
@@ -63,15 +61,6 @@ function App() {
     [running, result],
   )
 
-  const selectPoint = useCallback((id: PointId) => setSelected((prev) => ({ id, n: (prev?.n ?? 0) + 1 })), [])
-  const editPoint = useCallback(
-    (id: PointId) => {
-      selectPoint(id)
-      setStepId('points')
-    },
-    [selectPoint],
-  )
-
   const next = STEPS[stepIndex + 1]
   const prev = STEPS[stepIndex - 1]
   const canNext = !!next && !running && (next.id !== 'result' || !!result)
@@ -80,9 +69,7 @@ function App() {
   const body = useMemo(() => {
     switch (stepId) {
       case 'points':
-        return <PointsStep api={api} selected={selected} onSelect={selectPoint} />
-      case 'rules':
-        return <RulesStep api={api} onEditPoint={editPoint} />
+        return <PointsStep api={api} />
       case 'sketch':
         return <SketchStep api={api} />
       case 'run':
@@ -101,7 +88,7 @@ function App() {
           <p className="wiz-note">No result yet. Solve first.</p>
         )
     }
-  }, [stepId, api, state, run, cancel, go, result, playerKey, stale, selected, selectPoint, editPoint])
+  }, [stepId, api, state, run, cancel, go, result, playerKey, stale])
 
   return (
     <div className="wiz">

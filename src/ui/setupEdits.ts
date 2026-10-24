@@ -1,4 +1,5 @@
 import type { Constraint, Curve, FixPoint, PointId, Setup, Vec2 } from '../solver/types'
+import { DEFAULT_FLATNESS } from '../solver/types'
 import { constraintProblems, locate, nextPointId } from '../solver/constraints'
 
 /** Deep clone a setup so edits stay immutable. */
@@ -57,6 +58,14 @@ export function removeCurve(setup: Setup, ci: number): Setup {
 export function setResolution(setup: Setup, value: number): Setup {
   if (value === setup.resolution) return setup
   return { ...cloneSetup(setup), resolution: value }
+}
+
+export function setCurveFlatness(setup: Setup, ci: number, value: number): Setup {
+  const curve = setup.curves[ci]
+  if (!curve || (curve.flatness ?? DEFAULT_FLATNESS) === value) return setup
+  const next = cloneSetup(setup)
+  next.curves[ci].flatness = value
+  return next
 }
 
 export function setCurveTargetLength(setup: Setup, ci: number, value: number | null): Setup {
@@ -228,22 +237,39 @@ export function removeConstraintOn(setup: Setup, kind: Constraint['kind'], targe
   return index < 0 ? setup : removeConstraint(setup, index)
 }
 
+/** Constraints (of either kind) whose target sits on curve `ci`. */
+function followsOnCurve(setup: Setup, ci: number): Constraint[] {
+  return (setup.constraints ?? []).filter((c) => locate(setup, c.target)?.curve === ci)
+}
+
 /**
- * Makes `target` follow another point for `kind`, with no offset. Prefers the
- * point before it on its curve, then the one after, then any other point that
- * does not form a loop. Unchanged when there is nothing to follow.
+ * Makes `target` follow another point for `kind`, with no offset. A point has
+ * only one source, so it keeps the source its other property already follows.
+ * Otherwise the choice mirrors the curve's other points: if a neighbouring
+ * point follows a point of curve X, `target` follows the point of X at the same
+ * distance (else any point of X). Failing that, the first point of another
+ * curve. Unchanged when there is nothing valid to follow.
  */
 export function followPoint(setup: Setup, kind: Constraint['kind'], target: PointId): Setup {
   const ref = locate(setup, target)
   if (!ref) return setup
-  const { fixPoints } = setup.curves[ref.curve]
-  const candidates = [
-    fixPoints[ref.point - 1],
-    fixPoints[ref.point + 1],
-    ...setup.curves.flatMap((c) => c.fixPoints),
-  ].filter((fp): fp is FixPoint => !!fp && fp.id !== target)
-  for (const { id } of candidates) {
-    const next = addConstraint(setup, { kind, source: id, target })
+  const candidates: PointId[] = []
+  const other = (setup.constraints ?? []).find((c) => c.target === target && c.kind !== kind)
+  if (other) candidates.push(other.source)
+  else {
+    const mine = followsOnCurve(setup, ref.curve)
+      .map((c) => ({ c, from: locate(setup, c.target)!, to: locate(setup, c.source)! }))
+      .sort((a, b) => Math.abs(a.from.point - ref.point) - Math.abs(b.from.point - ref.point))
+    for (const { from, to } of mine) {
+      const points = setup.curves[to.curve].fixPoints
+      const same = points[to.point + ref.point - from.point]
+      if (same) candidates.push(same.id)
+      candidates.push(...points.map((fp) => fp.id))
+    }
+    candidates.push(...setup.curves.flatMap((c, ci) => (ci === ref.curve ? [] : c.fixPoints.map((fp) => fp.id))))
+  }
+  for (const source of candidates) {
+    const next = addConstraint(setup, { kind, source, target })
     if (next !== setup) return next
   }
   return setup

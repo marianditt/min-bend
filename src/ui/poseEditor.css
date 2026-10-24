@@ -32,13 +32,6 @@
   white-space: nowrap;
 }
 
-.pose-editor__hint {
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-  line-height: 1.45;
-  max-width: 68ch;
-}
-
 .pose-editor__canvas {
   position: relative;
   flex: 1;
@@ -122,14 +115,4 @@
   .pose-editor__zoom {
     margin-left: 0;
   }
-}
-
-.pose-editor__tools {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.pose-editor--move .pose-editor__canvas canvas {
-  cursor: grab;
 }

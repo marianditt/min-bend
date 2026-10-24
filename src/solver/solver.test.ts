@@ -155,11 +155,10 @@ describe('forces', () => {
     targetLength,
     constraints: [],
   })
-  const zeroVel = (n: number): Vec2[] => Array.from({ length: n }, () => [0, 0])
 
   it('produces ~zero acceleration on a straight chain', () => {
     const pts: Vec2[] = [[0, 0], [3, 0], [6, 0], [9, 0], [12, 0]]
-    const accel = computeAcceleration(pts, zeroVel(5), DEFAULT_CONSTANTS, model(5))
+    const accel = computeAcceleration(pts, DEFAULT_CONSTANTS, model(5))
     for (const a of accel) {
       expect(a[0]).toBeCloseTo(0, 12)
       expect(a[1]).toBeCloseTo(0, 12)
@@ -168,14 +167,14 @@ describe('forces', () => {
 
   it('does not equalize segment lengths on its own', () => {
     const pts: Vec2[] = [[0, 0], [4, 0], [6, 0]]
-    const accel = computeAcceleration(pts, zeroVel(3), DEFAULT_CONSTANTS, model(3))
+    const accel = computeAcceleration(pts, DEFAULT_CONSTANTS, model(3))
     expect(accel[1][0]).toBeCloseTo(0, 12)
     expect(accel[1][1]).toBeCloseTo(0, 12)
   })
 
   it('pulls a too-long chain together uniformly and leaves pinned points alone', () => {
     const pts: Vec2[] = [[0, 0], [4, 0], [6, 0]]
-    const accel = computeAcceleration(pts, zeroVel(3), { ...DEFAULT_CONSTANTS, kBend: 0 }, model(3, 2))
+    const accel = computeAcceleration(pts, { ...DEFAULT_CONSTANTS, kBend: 0 }, model(3, 2))
     expect(accel[1][0]).toBeCloseTo(0, 12) // equal tension on both sides cancels on a straight line
     expect(accel[0]).toEqual([0, 0])
     expect(accel[2]).toEqual([0, 0])
@@ -192,7 +191,7 @@ describe('forces', () => {
 
   it('skips degenerate segments without producing NaN', () => {
     const pts: Vec2[] = [[0, 0], [0, 0], [2, 0]]
-    const accel = computeAcceleration(pts, zeroVel(3), DEFAULT_CONSTANTS, model(3))
+    const accel = computeAcceleration(pts, DEFAULT_CONSTANTS, model(3))
     expect(accel.flat().every(Number.isFinite)).toBe(true)
   })
 })
@@ -656,5 +655,56 @@ describe('robustness', () => {
   it('reports a clear error for unusable constants instead of looping forever', () => {
     expect(() => solve(two([0, 0], [4, 0], null, null), { ...DEFAULT_CONSTANTS, h: 0 })).toThrow(/step size/i)
     expect(() => solve(two([0, 0], [4, 0], null, null), { ...DEFAULT_CONSTANTS, maxIter: NaN })).toThrow(/iterations/i)
+  })
+})
+
+describe('energy', () => {
+  const bent = (extra: Partial<Curve> = {}): Setup => {
+    const setup = chain([fp([0, 0], [1, 0]), fp([10, 0], [1, 0])], 1, extra)
+    setup.curves[0].spans = [[[5, 6]]]
+    return setup
+  }
+  const energies = (constants: Partial<typeof DEFAULT_CONSTANTS>, setup = bent()) =>
+    solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 4000, ...constants }, plainInit)
+      .frames.filter((f) => f.energy !== undefined)
+
+  it('never lets the total energy rise, with or without drain', () => {
+    for (const gamma of [0, 0.1, 2]) {
+      const frames = energies({ gamma }, bent({ targetLength: 14 }))
+      for (let i = 1; i < frames.length; i++) {
+        if (frames[i].curves[0].length !== frames[i - 1].curves[0].length) continue
+        expect(frames[i].energy!).toBeLessThanOrEqual(frames[i - 1].energy! * (1 + 1e-9) + 1e-9)
+      }
+    }
+  })
+
+  it('keeps the energy (nearly) constant without drain and loses it with drain', () => {
+    const free = energies({ gamma: 0 }, bent())
+    const drained = energies({ gamma: 0.5 }, bent())
+    const at = (fs: Frame[], i: number) => fs[Math.min(i, fs.length - 1)].energy!
+    expect(at(free, 100)).toBeGreaterThan(0.8 * at(free, 1))
+    expect(at(drained, 100)).toBeLessThan(at(free, 100))
+    expect(at(drained, 3000)).toBeLessThan(0.5 * at(drained, 1))
+  })
+
+  it('kinetic energy can never exceed the total energy', () => {
+    const frames = energies({}, bent({ targetLength: 60 }))
+    for (const f of frames) expect(f.ke).toBeLessThanOrEqual(f.energy! + 1e-9)
+  })
+})
+
+describe('shortness vs flatness', () => {
+  const total = (flatness: number): number => {
+    const setup = chain([fp([0, 0], [0, 1]), fp([4, 0], [0, -1])], 1, { flatness })
+    const f = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 20000 }, plainInit).frames.at(-1)!
+    return segLens(f.curves[0]).reduce((a, b) => a + b, 0)
+  }
+
+  it('a shortness-leaning curve ends up no longer than a flatness-leaning one', () => {
+    expect(total(0)).toBeLessThan(total(1))
+  })
+
+  it('rejects a balance outside 0..1', () => {
+    expect(validateSetup(chain([fp([0, 0]), fp([4, 0])], 1, { flatness: 2 }))[0].field).toBe('flatness:0')
   })
 })
