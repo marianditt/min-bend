@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Setup } from '../solver/types'
-import { addConstraint, addFixPoint, followPoint, removeFixPoint, setFixPosFree, setResolution, toggleCurveHidden } from './setupEdits'
+import { addConstraint, addFixPoint, followPoint, removeCurve, removeFixPoint, setFixPosFree, setResolution, toggleCurveHidden } from './setupEdits'
 import { locate } from '../solver/constraints'
 
 const base = (): Setup => ({
@@ -117,5 +117,19 @@ describe('follow rules', () => {
   it('does nothing with a single curve', () => {
     const s = base()
     expect(followPoint(s, 'position', 'p2')).toBe(s)
+  })
+})
+
+describe('removeCurve', () => {
+  it('replaces the last curve with a fresh default curve and drops its constraints', () => {
+    const setup = base()
+    setup.curves.push({ fixPoints: [{ id: 'p3', pos: [0, -2], orientation: null }, { id: 'p4', pos: [4, -2], orientation: null }], spans: [[]] })
+    setup.constraints = [{ kind: 'position', source: 'p1', target: 'p3' }]
+    const one = removeCurve(setup, 1)
+    expect(one.curves).toHaveLength(1)
+    expect(one.constraints).toBeUndefined()
+    const next = removeCurve(one, 0)
+    expect(next.curves).toHaveLength(1)
+    expect(next.curves[0].fixPoints).toHaveLength(2)
   })
 })
