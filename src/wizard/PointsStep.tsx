@@ -6,6 +6,8 @@ import { NumberField } from '../ui/NumberField'
 import {
   addCurve,
   addFixPoint,
+  isCurveClosed,
+  setCurveClosed,
   followPoint,
   setFollowSource,
   moveFix,
@@ -19,6 +21,7 @@ import {
   setFixOrientation,
   setFixPosFree,
 } from '../ui/setupEdits'
+import { DEFAULT_NGON, addNgon, ngonProblem, type NgonParams } from '../ui/presets'
 import { degreesToVector, formatDirectionExpr, parseDirectionExpr, vectorToDegrees } from './orientation'
 import type { SetupApi } from './types'
 
@@ -286,6 +289,14 @@ export function PointsStep({ api }: { api: SetupApi }) {
                 </span>
               </button>
               <div className="wiz-row">
+                <label className="wiz-muted">
+                  <input
+                    type="checkbox"
+                    checked={isCurveClosed(setup, ci)}
+                    onChange={(e) => update((s) => setCurveClosed(s, ci, e.target.checked))}
+                  />{' '}
+                  Closed
+                </label>
                 <button
                   type="button"
                   className="btn btn--sm btn--ghost btn--danger"
@@ -468,6 +479,34 @@ export function PointsStep({ api }: { api: SetupApi }) {
       >
         + Add another curve
       </button>
+
+      <NgonPreset onAdd={(params) => update((st) => addNgon(st, params))} />
     </div>
+  )
+}
+
+function NgonPreset({ onAdd }: { onAdd: (params: NgonParams) => void }) {
+  const [params, setParams] = useState<NgonParams>(DEFAULT_NGON)
+  const problem = ngonProblem(params)
+  return (
+    <section className="curve-card">
+      <h3>Preset: n-gon</h3>
+      <NumberField label="n (sides)" value={params.n} integer min={3} onChange={(n) => setParams({ ...params, n })} />
+      <NumberField
+        label="Origin x"
+        value={params.origin[0]}
+        onChange={(x) => setParams({ ...params, origin: [x, params.origin[1]] })}
+      />
+      <NumberField
+        label="Origin y"
+        value={params.origin[1]}
+        onChange={(y) => setParams({ ...params, origin: [params.origin[0], y] })}
+      />
+      <NumberField label="Radius" value={params.radius} min={0} onChange={(radius) => setParams({ ...params, radius })} />
+      {problem ? <p className="hint">{problem}</p> : null}
+      <button type="button" className="btn btn--block" disabled={problem !== null} onClick={() => onAdd(params)}>
+        + Add n-gon
+      </button>
+    </section>
   )
 }

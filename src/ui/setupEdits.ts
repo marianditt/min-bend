@@ -1,6 +1,6 @@
 import type { Constraint, Curve, FixPoint, PointId, Setup, Vec2 } from '../solver/types'
 import { DEFAULT_FLATNESS } from '../solver/types'
-import { constraintProblems, locate, nextPointId } from '../solver/constraints'
+import { constraintFor, constraintProblems, locate, nextPointId } from '../solver/constraints'
 
 /** Deep clone a setup so edits stay immutable. */
 export function cloneSetup(setup: Setup): Setup {
@@ -79,9 +79,41 @@ export function setCurveTargetLength(setup: Setup, ci: number, value: number | n
   return next
 }
 
+/**
+ * A closed curve ends where it starts: its last control point follows the first
+ * one's position and orientation, so the loop is smooth at the join.
+ */
+export function isCurveClosed(setup: Setup, ci: number): boolean {
+  const pts = setup.curves[ci]?.fixPoints
+  if (!pts || pts.length < 2) return false
+  const first = pts[0].id
+  const last = pts[pts.length - 1].id
+  return (['position', 'orientation'] as const).every((kind) => constraintFor(setup, kind, last)?.source === first)
+}
+
+export function setCurveClosed(setup: Setup, ci: number, closed: boolean): Setup {
+  const pts = setup.curves[ci]?.fixPoints
+  if (!pts || pts.length < 2 || isCurveClosed(setup, ci) === closed) return setup
+  const first = pts[0].id
+  const last = pts[pts.length - 1].id
+  if (!closed) return removeConstraintOn(removeConstraintOn(setup, 'position', last), 'orientation', last)
+  const withPos = addConstraint(setup, { kind: 'position', source: first, target: last })
+  return withPos === setup ? setup : addConstraint(withPos, { kind: 'orientation', source: first, target: last })
+}
+
 export function addFixPoint(setup: Setup, ci: number): Setup {
   const curve = setup.curves[ci]
   if (!curve) return setup
+  if (isCurveClosed(setup, ci)) {
+    // Keep the closing point last: insert before it, halfway along the final span.
+    const [a, b] = curve.fixPoints.slice(-2)
+    const next = cloneSetup(setup)
+    const target = next.curves[ci]
+    const at = target.fixPoints.length - 1
+    target.fixPoints.splice(at, 0, createFixPoint(nextPointId(setup), [(a.pos[0] + b.pos[0]) / 2, (a.pos[1] + b.pos[1]) / 2]))
+    target.spans.splice(at, 0, [])
+    return next
+  }
   const count = curve.fixPoints.length
   const last = curve.fixPoints[count - 1]
   const prev = curve.fixPoints[count - 2] ?? last
