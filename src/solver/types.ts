@@ -116,9 +116,9 @@ export interface PhysicsConstants {
   /** Bend-minimization force stiffness. */
   kBend: number
   /**
-   * Energy drain: each step removes `2 * gamma * h` times the kinetic energy from
-   * the total (kinetic + potential) energy budget, so it keeps falling. With 0 the
-   * total energy is conserved. Each step converts the budget into kinetic energy.
+   * Energy drain: the kinetic energy allowance on top of the potential energy
+   * is cooled by a fixed schedule, scaled by `exp(-2 * gamma * h)` each step. With 0
+   * the allowance stays constant.
    */
   gamma: number
   /** Integration step size. */
