@@ -100,24 +100,28 @@ function FollowEditor({
   const decided = setup.constraints?.find((c) => c.target === constraint.target && c.kind !== constraint.kind)?.source
   return (
     <div className="wiz-follow">
-      <label className="wiz-select">
-        <span className="wiz-field__label">Follow which point?</span>
-        <select value={constraint.source} aria-label={`${label}: follow which point`} onChange={(e) => onSource(e.target.value)}>
-          {setup.curves.flatMap((c, ci) =>
-            ci === own
-              ? []
-              : c.fixPoints.flatMap((fp, pi) =>
-                  decided && fp.id !== decided
-                    ? []
-                    : [
-                        <option key={fp.id} value={fp.id}>
-                          Curve {ci + 1} · Point {pi + 1}
-                        </option>,
-                      ],
-                ),
-          )}
-        </select>
-      </label>
+      <div className="wiz-chips" role="group" aria-label={`${label}: follow which point`}>
+        {setup.curves.flatMap((c, ci) =>
+          ci === own
+            ? []
+            : c.fixPoints.flatMap((fp, pi) =>
+                decided && fp.id !== decided
+                  ? []
+                  : [
+                      <button
+                        key={fp.id}
+                        type="button"
+                        className="wiz-chip"
+                        aria-pressed={fp.id === constraint.source}
+                        title={`Curve ${ci + 1} · Point ${pi + 1}`}
+                        onClick={() => onSource(fp.id)}
+                      >
+                        {ci + 1}.{pi + 1}
+                      </button>,
+                    ],
+              ),
+        )}
+      </div>
       {constraint.kind === 'orientation' ? (
         <NumberField
           label="Angle offset (degrees)"

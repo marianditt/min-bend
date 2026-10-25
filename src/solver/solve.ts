@@ -386,7 +386,9 @@ export function solve(
   )
   report(0, initialKe, true)
 
-  // Total energy budget: the initial potential energy; only the drain lowers it.
+  // Cap on the kinetic energy above the current potential energy; it follows an exponential cooling
+  // schedule, so the drain does not depend on the last total energy. The budget itself never rises.
+  let kineticAllowance = 0
   let energy = totalPotentialEnergy(chains, constants)
   let stepHint = 0
   let termination: 'ke' | 'maxIter' = 'maxIter'
@@ -408,6 +410,10 @@ export function solve(
     const dirs: Vec2[][] = forces.map((f) => f.map((v): Vec2 => (maxForce > 0 ? [v[0] / maxForce, v[1] / maxForce] : [0, 0])))
     let dirSquares = 0
     for (const d of dirs) for (const v of d) dirSquares += v[0] * v[0] + v[1] * v[1]
+
+    if (i === 1) kineticAllowance = (0.5 * (MAX_STEP_FRACTION * res) ** 2 * dirSquares) / (h * h)
+    else kineticAllowance *= Math.exp(-2 * constants.gamma * h)
+    energy = Math.min(energy, totalPotentialEnergy(chains, constants) + kineticAllowance)
 
     const before = snapshot(chains)
     const pointsBefore = countPoints()
@@ -478,14 +484,13 @@ export function solve(
 
     let ke = totalKineticEnergy(chains)
     const pe = totalPotentialEnergy(chains, constants)
+    if (countChanged) energy = pe + ke // a change of discretization re-baselines the budget
     // The kinetic energy is exactly what the budget leaves over; the projections must not change that.
     if (ke > 0 && energy > pe && !countChanged) {
       const factor = Math.sqrt((energy - pe) / ke)
       for (const chain of chains) for (const v of chain.vel) { v[0] *= factor; v[1] *= factor }
       ke *= factor * factor
     }
-    // Friction drains the budget; a change of discretization re-baselines it.
-    energy = countChanged ? pe + ke : Math.max(pe, energy - 2 * constants.gamma * h * ke)
 
     if (ke < epsilon) settleStreak += 1
     else settleStreak = 0
