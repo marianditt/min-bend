@@ -16,7 +16,7 @@ interface ResultStepProps {
 export function ResultStep({ api, result, playerKey, stale, onRerun, onEdit }: ResultStepProps) {
   const hidden = useMemo(() => api.setup.curves.map((c) => !!c.hidden), [api.setup])
   const iterations = result.meta.iterations ?? result.frames.length
-  const settled = result.meta.termination === 'ke'
+  const settled = result.meta.termination === 'rest'
   const first = result.frames[0]
   const last = result.frames.at(-1)
   const count = (pts: unknown[][] | undefined) => (pts ? pts.reduce((n, c) => n + c.length, 0) : 0)

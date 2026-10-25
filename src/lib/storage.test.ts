@@ -146,13 +146,13 @@ describe('legacy constants', () => {
       JSON.stringify({
         version: STORAGE_VERSION,
         setup: { curves: [{ fixPoints: [{ pos: [0, 0], orientation: null }, { pos: [1, 0], orientation: null }], spans: [[]] }], resolution: 1 },
-        constants: { kLen: 5, kBend: 2 },
+        constants: { kLen: 5, friction: 3 },
       }),
     )
     const loaded = loadState()
-    expect(loaded?.constants.kBend).toBe(2)
+    expect(loaded?.constants.friction).toBe(3)
     expect(loaded?.constants).not.toHaveProperty('kLen')
-    expect(loaded?.constants.gamma).toBeGreaterThan(0)
+    expect(loaded?.constants.controlMass).toBeGreaterThan(0)
   })
 })
 

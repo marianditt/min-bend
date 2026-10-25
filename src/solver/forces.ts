@@ -1,4 +1,4 @@
-import { EPS_STABILIZE, type PhysicsConstants, type Vec2 } from './types'
+import { EPS_STABILIZE, type Vec2 } from './types'
 
 /** 2D vector operations */
 export function add(a: Vec2, b: Vec2): Vec2 {
@@ -65,10 +65,10 @@ export function computeSegments(pts: Vec2[]): {
  * Symmetric bend forces for the joint at free point k (triple p_{k-1}, p_k, p_{k+1}).
  *
  * These are the negative gradient of the discrete bend energy
- *   E_k = kBend * (1 - shat_{k-1}·shat_k)
+ *   E_k = stiffness * (1 - shat_{k-1}·shat_k)
  * with respect to each joint point, so the forces sum to zero:
- *   F_prev = kBend * (c*t0 - t1) / l0     (force on p_{k-1})
- *   F_next = kBend * (t0 - c*t1) / l1     (force on p_{k+1})
+ *   F_prev = stiffness * (c*t0 - t1) / l0     (force on p_{k-1})
+ *   F_next = stiffness * (t0 - c*t1) / l1     (force on p_{k+1})
  *   F_cur  = -(F_prev + F_next)           (force on p_k)
  * where t0/t1 are the segment unit vectors and c = t0·t1.
  *
@@ -80,7 +80,7 @@ export function computeBendForces(
   k: number,
   lengths: number[],
   unitVecs: Vec2[],
-  kBend: number,
+  stiffness: number,
 ): { prev: Vec2; cur: Vec2; next: Vec2 } {
   const l0 = lengths[k - 1]
   const l1 = lengths[k]
@@ -94,8 +94,8 @@ export function computeBendForces(
   if (c > 1) c = 1
   else if (c < -1) c = -1
 
-  const prev = scale(sub(scale(t0, c), t1), kBend / l0)
-  const next = scale(sub(t0, scale(t1, c)), kBend / l1)
+  const prev = scale(sub(scale(t0, c), t1), stiffness / l0)
+  const next = scale(sub(t0, scale(t1, c)), stiffness / l1)
   const cur = scale(add(prev, next), -1)
 
   return { prev, cur, next }
@@ -118,13 +118,15 @@ export interface ChainModel {
   /** Target total path length of the chain, or null when its length is free. */
   targetLength: number | null
   constraints: PointConstraint[]
-  /** Multiplier of the bend stiffness for this chain (default 1). */
-  bendWeight?: number
+  /** Bend stiffness of this chain (default 1). */
+  bendStiffness?: number
   /**
    * Stiffness k of the length energy ½·k·(L − T)², where T is the target
    * length, or 0 when the length is free (default 0 = no length energy).
    */
   lengthStiffness?: number
+  /** Mass per point (default 1): heavier control points settle more slowly than the interior points between them. */
+  mass?: number[]
 }
 
 /** Stiffness of the length energy of a chain with a target length. */
@@ -148,61 +150,63 @@ export interface EnergyParts {
 }
 
 /**
- * Potential energy of a chain: bend energy kBend * (1 - cos) summed over every
+ * Potential energy of a chain: bend energy stiffness * (1 - cos) summed over every
  * joint, plus the length energy ½·k·(L - T)² (T = 0 when the length is free).
  * Their gradients are the forces used by {@link computeAcceleration}.
  */
-export function computeEnergyParts(pts: Vec2[], constants: PhysicsConstants, model: ChainModel): EnergyParts {
+export function computeEnergyParts(pts: Vec2[], model: ChainModel): EnergyParts {
   const { lengths, unitVecs } = computeSegments(pts)
-  const kBend = constants.kBend * (model.bendWeight ?? 1)
+  const stiffness = model.bendStiffness ?? 1
   let bend = 0
   for (let j = 1; j < pts.length - 1; j++) {
     if (lengths[j - 1] < EPS_STABILIZE || lengths[j] < EPS_STABILIZE) continue
     bend += 1 - Math.max(-1, Math.min(1, dot(unitVecs[j - 1], unitVecs[j])))
   }
   const delta = totalLength(lengths) - (model.targetLength ?? 0)
-  return { bend: kBend * bend, length: 0.5 * (model.lengthStiffness ?? 0) * delta * delta }
+  return { bend: stiffness * bend, length: 0.5 * (model.lengthStiffness ?? 0) * delta * delta }
 }
 
-export function computePotentialEnergy(pts: Vec2[], constants: PhysicsConstants, model: ChainModel): number {
-  const { length, bend } = computeEnergyParts(pts, constants, model)
+export function computePotentialEnergy(pts: Vec2[], model: ChainModel): number {
+  const { length, bend } = computeEnergyParts(pts, model)
   return length + bend
 }
 
-/** Total acceleration of every movable point of a chain (mass = 1). Friction is not a force: see the solver's energy drain. */
+/**
+ * Acceleration of every movable point of a chain: the bend-minimizing force
+ * plus the length-error-minimizing force, divided by the point's mass.
+ * Friction is applied by the integrator.
+ */
 export function computeAcceleration(
   pts: Vec2[],
-  constants: PhysicsConstants,
   model: ChainModel,
 ): Vec2[] {
   const last = pts.length - 1
   const { lengths, unitVecs } = computeSegments(pts)
   const tension = lengthTension(lengths, model)
-  const kBend = constants.kBend * (model.bendWeight ?? 1)
+  const stiffness = model.bendStiffness ?? 1
+  const massOf = (i: number): number => model.mass?.[i] ?? 1
 
-  const accel: Vec2[] = new Array(pts.length)
-  for (let i = 0; i <= last; i++) accel[i] = [0, 0]
+  const force: Vec2[] = new Array(pts.length)
+  for (let i = 0; i <= last; i++) force[i] = [0, 0]
 
   for (let i = 0; i <= last; i++) {
-    if (!model.movable[i]) continue
-    let force: Vec2 = [0, 0]
-    if (tension !== 0) {
-      if (i < last) force = add(force, scale(unitVecs[i], tension))
-      if (i > 0) force = sub(force, scale(unitVecs[i - 1], tension))
-    }
-    accel[i] = force
+    if (!model.movable[i] || tension === 0) continue
+    if (i < last) force[i] = add(force[i], scale(unitVecs[i], tension))
+    if (i > 0) force[i] = sub(force[i], scale(unitVecs[i - 1], tension))
   }
 
   for (let j = 1; j < last; j++) {
-    const { prev, cur, next } = computeBendForces(j, lengths, unitVecs, kBend)
-    if (model.movable[j - 1]) accel[j - 1] = add(accel[j - 1], prev)
-    if (model.movable[j]) accel[j] = add(accel[j], cur)
-    if (model.movable[j + 1]) accel[j + 1] = add(accel[j + 1], next)
+    const { prev, cur, next } = computeBendForces(j, lengths, unitVecs, stiffness)
+    if (model.movable[j - 1]) force[j - 1] = add(force[j - 1], prev)
+    if (model.movable[j]) force[j] = add(force[j], cur)
+    if (model.movable[j + 1]) force[j + 1] = add(force[j + 1], next)
   }
 
+  const accel: Vec2[] = force.map((f, i) => scale(f, 1 / massOf(i)))
+
   // A movable control point with a fixed tangent drags its two neighbors
-  // along (they are slaved to its tangent line), so their perpendicular
-  // accelerations are pooled onto it instead of being lost to the projection.
+  // along (they are slaved to its tangent line), so the three move as one
+  // body: their perpendicular forces are pooled and divided by the total mass.
   for (const c of model.constraints) {
     if (!c.dir || !model.movable[c.index]) continue
     const d = c.dir
@@ -210,9 +214,12 @@ export function computeAcceleration(
     if (c.index > 0) members.push(c.index - 1)
     if (c.index < last) members.push(c.index + 1)
     let perpSum: Vec2 = [0, 0]
-    for (const m of members) perpSum = add(perpSum, sub(accel[m], scale(d, dot(accel[m], d))))
-    const own = accel[c.index]
-    accel[c.index] = add(scale(d, dot(own, d)), scale(perpSum, 1 / members.length))
+    let massSum = 0
+    for (const m of members) {
+      perpSum = add(perpSum, sub(force[m], scale(d, dot(force[m], d))))
+      massSum += massOf(m)
+    }
+    accel[c.index] = add(scale(d, dot(accel[c.index], d)), scale(perpSum, 1 / massSum))
   }
 
   return accel
@@ -276,11 +283,11 @@ export function verifyFinite(pts: Vec2[], vel: Vec2[], accel: Vec2[]): void {
 }
 
 /** Compute kinetic energy (pinned points have zero velocity). */
-export function computeKineticEnergy(vel: Vec2[]): number {
+export function computeKineticEnergy(vel: Vec2[], mass?: number[]): number {
   let ke = 0
-  for (const v of vel) {
-    ke += v[0] * v[0] + v[1] * v[1]
-  }
+  vel.forEach((v, i) => {
+    ke += (mass?.[i] ?? 1) * (v[0] * v[0] + v[1] * v[1])
+  })
   return 0.5 * ke
 }
 
