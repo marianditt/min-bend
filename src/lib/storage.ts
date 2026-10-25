@@ -151,7 +151,13 @@ function sanitizeConstraints(value: unknown): Constraint[] {
     if (raw.kind === 'position') {
       out.push(isVec2(raw.delta) ? { kind: 'position', source, target, delta: [raw.delta[0], raw.delta[1]] } : { kind: 'position', source, target })
     } else {
-      out.push(isFiniteNumber(raw.delta) ? { kind: 'orientation', source, target, delta: raw.delta } : { kind: 'orientation', source, target })
+      out.push({
+        kind: 'orientation',
+        source,
+        target,
+        ...(isFiniteNumber(raw.delta) ? { delta: raw.delta } : {}),
+        ...(raw.mirror === true ? { mirror: true } : {}),
+      })
     }
   }
   return out

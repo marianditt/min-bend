@@ -247,17 +247,19 @@ function followsOnCurve(setup: Setup, ci: number): Constraint[] {
 /**
  * Makes `target` follow another point for `kind`, with no offset. A point has
  * only one source, so it keeps the source its other property already follows.
- * Otherwise the choice mirrors the curve's other points: if a neighbouring
+ * Otherwise `preferred` (the source picked in the UI) is used alone; failing
+ * that the choice mirrors the curve's other points: if a neighbouring
  * point follows a point of curve X, `target` follows the point of X at the same
  * distance (else any point of X). Failing that, the first other point in the
  * setup. Unchanged when there is nothing valid to follow.
  */
-export function followPoint(setup: Setup, kind: Constraint['kind'], target: PointId): Setup {
+export function followPoint(setup: Setup, kind: Constraint['kind'], target: PointId, preferred?: PointId | null): Setup {
   const ref = locate(setup, target)
   if (!ref) return setup
   const candidates: PointId[] = []
   const other = (setup.constraints ?? []).find((c) => c.target === target && c.kind !== kind)
   if (other) candidates.push(other.source)
+  else if (preferred) candidates.push(preferred)
   else {
     const mine = followsOnCurve(setup, ref.curve)
       .map((c) => ({ c, from: locate(setup, c.target)!, to: locate(setup, c.source)! }))
@@ -279,13 +281,13 @@ export function followPoint(setup: Setup, kind: Constraint['kind'], target: Poin
 }
 
 /**
- * Sets the one point `target` follows (null = none) for all of its constraints.
- * With no constraint yet, the position starts following. Unchanged when it would form a loop.
+ * Re-points the existing constraints of `target` to `source` (null removes them).
+ * A target without constraints is left alone; the caller remembers the chosen
+ * source until a property starts following. Unchanged when it would form a loop.
  */
 export function setFollowSource(setup: Setup, target: PointId, source: PointId | null): Setup {
   const own = (setup.constraints ?? []).filter((c) => c.target === target)
   if (source === null) return own.reduce((s, c) => removeConstraintOn(s, c.kind, target), setup)
-  if (own.length === 0) return addConstraint(setup, { kind: 'position', source, target })
   let next = setup
   for (const c of own) {
     const updated = addConstraint(next, { ...c, source })
@@ -304,5 +306,18 @@ export function setConstraintDelta(setup: Setup, kind: Constraint['kind'], targe
   if (c.kind === 'position' && Array.isArray(delta)) c.delta = [delta[0], delta[1]]
   else if (c.kind === 'orientation' && typeof delta === 'number') c.delta = delta
   else return setup
+  return next
+}
+
+/** Sets the direction mapping of an orientation constraint: angle = (mirror ? -source : source) + delta. */
+export function setOrientationMapping(setup: Setup, target: PointId, mapping: { mirror: boolean; delta: number }): Setup {
+  const index = (setup.constraints ?? []).findIndex((c) => c.kind === 'orientation' && c.target === target)
+  if (index < 0) return setup
+  const next = cloneSetup(setup)
+  const c = next.constraints![index]
+  if (c.kind !== 'orientation') return setup
+  c.delta = mapping.delta
+  if (mapping.mirror) c.mirror = true
+  else delete c.mirror
   return next
 }

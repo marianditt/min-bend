@@ -121,20 +121,21 @@ const rotateVec = (v: Vec2, angle: number): Vec2 => {
 function enforceOrientationGroups(groups: OrientationGroup[], chains: ChainState[]): void {
   for (const group of groups) {
     let sum: Vec2 = [0, 0]
-    for (const { ref, angle } of group) {
+    for (const { ref, angle, mirror } of group) {
       const { pts, controlIndices } = chains[ref.curve]
       const i = controlIndices[ref.point]
       let t: Vec2 = [0, 0]
       if (i > 0) t = add(t, normalize(sub(pts[i], pts[i - 1])))
       if (i < pts.length - 1) t = add(t, normalize(sub(pts[i + 1], pts[i])))
-      sum = add(sum, rotateVec(normalize(t), -angle))
+      const back = rotateVec(normalize(t), -angle)
+      sum = add(sum, mirror ? [back[0], -back[1]] : back)
     }
     const shared = normalize(sum)
     if (length(shared) === 0) continue
-    for (const { ref, angle } of group) {
+    for (const { ref, angle, mirror } of group) {
       const { pts, vel, controlIndices } = chains[ref.curve]
       const i = controlIndices[ref.point]
-      const d = rotateVec(shared, angle)
+      const d = rotateVec(mirror ? [shared[0], -shared[1]] : shared, angle)
       if (i > 0) {
         pts[i - 1] = sub(pts[i], scale(d, length(sub(pts[i], pts[i - 1]))))
         vel[i - 1] = scale(d, dot(vel[i - 1], d))

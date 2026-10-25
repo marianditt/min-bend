@@ -84,10 +84,16 @@ export interface PositionConstraint extends ConstraintBase {
   delta?: Vec2
 }
 
-/** The target's tangent is the source's tangent rotated counter-clockwise by `delta` degrees (default 0). */
+/**
+ * The target's direction angle is `mirror ? -a : a` plus `delta` degrees, where
+ * `a` is the source's direction angle. Defaults: no mirror, delta 0.
+ * So "x" = {}, "x + 90" = {delta: 90}, "-x" = {mirror: true}, "90 - x" = {mirror: true, delta: 90}.
+ */
 export interface OrientationConstraint extends ConstraintBase {
   kind: 'orientation'
   delta?: number
+  /** Reflects the source's direction about the x axis (angle -> -angle) before `delta` is added. */
+  mirror?: boolean
 }
 
 /**
