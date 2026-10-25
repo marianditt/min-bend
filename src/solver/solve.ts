@@ -55,10 +55,10 @@ interface ChainState {
 /** Per-step displacement cap, as a fraction of the resolution; keeps a stiff transient from exploding. */
 const MAX_STEP_FRACTION = 0.25
 
-/** Strength of the pull toward a shorter curve when its flatness is 0.5. */
-const SHORTNESS_PULL = 0.1
-/** Even a "flattest possible" curve keeps this much pull, so it cannot grow forever. */
-const MIN_SHORTNESS_SHARE = 0.02
+/** Force per radian of turning angle at a point of a curve whose flatness is 1. */
+const BEND_GAIN = 1
+/** Length-force stiffness, per resolution unit, of a free curve whose flatness is 0. */
+const LENGTH_GAIN = 1
 
 /** Physics weights of one curve, derived from its flatness, length constraint and the resolution. */
 interface Weights {
@@ -67,19 +67,16 @@ interface Weights {
 }
 
 /**
- * `reference` is the curve's initial length. A free curve's length energy
- * ½·k·L² is scaled by it, so that its tension at the initial length equals a
- * resolution-independent pull.
+ * The flatness slider weights the two forces: at 0 no point feels a bend force,
+ * at 1 a free-length curve feels no length force. A target length is a
+ * constraint and keeps its full stiffness.
  */
-function curveWeights(curve: Curve, res: number, reference: number, hasTarget: boolean): Weights {
+function curveWeights(curve: Curve, res: number, hasTarget: boolean): Weights {
   const raw = curve.flatness
   const flat = typeof raw === 'number' && Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : DEFAULT_FLATNESS
   return {
-    // Bend energy is summed per joint; dividing by the spacing makes it independent of the resolution.
-    bendStiffness: (2 * flat) / res,
-    lengthStiffness: hasTarget
-      ? LENGTH_STIFFNESS
-      : (2 * SHORTNESS_PULL * Math.max(1 - flat, MIN_SHORTNESS_SHARE)) / Math.max(reference, res),
+    bendStiffness: BEND_GAIN * flat,
+    lengthStiffness: ((hasTarget ? LENGTH_STIFFNESS : LENGTH_GAIN * (1 - flat))) / res,
   }
 }
 
@@ -196,8 +193,7 @@ function buildChain(
   const target = curve.targetLength
   const targetLength = target != null && Number.isFinite(target) && target > 0 ? target : null
 
-  const reference = plan.spans.reduce((sum, span) => sum + span.length, 0)
-  const weights = curveWeights(curve, res, reference, targetLength !== null)
+  const weights = curveWeights(curve, res, targetLength !== null)
   const model = buildModel(pts.length, controls, plan.controlIndices, targetLength, weights, controlMass)
   const vel: Vec2[] = pts.map(() => [0, 0])
   enforceConstraints(pts, vel, model.constraints)
@@ -348,8 +344,8 @@ export function solve(
   report(0, initialKe, true)
 
   // Stability limit of the explicit integrator, re-evaluated every step. The stiffest bend mode
-  // oscillates with omega² ~ 16·stiffness/l² (l = shortest segment) and the collective length mode with
-  // omega² ~ 4·k·N (both divided by the lightest mass); the step must stay well below 1/omega.
+  // oscillates with omega² ~ 8·stiffness/l (l = shortest segment) and the collective length mode with
+  // omega² ~ 4·k (both divided by the lightest mass); the step must stay well below 1/omega.
   const stableStep = (): number => {
     let limit = Infinity
     for (const { pts, model } of chains) {
@@ -358,8 +354,8 @@ export function solve(
         shortest = Math.min(shortest, Math.hypot(pts[k + 1][0] - pts[k][0], pts[k + 1][1] - pts[k][1]))
       }
       shortest = Math.max(shortest, 0.05 * res)
-      const bend = (16 * (model.bendStiffness ?? 1)) / (shortest * shortest)
-      const tension = 4 * (model.lengthStiffness ?? 0) * pts.length
+      const bend = (8 * (model.bendStiffness ?? 1)) / shortest
+      const tension = 4 * (model.lengthStiffness ?? 0)
       const omega = Math.sqrt((bend + tension) / Math.min(1, constants.controlMass) + friction * friction)
       if (omega > 0) limit = Math.min(limit, 0.5 / omega)
     }
