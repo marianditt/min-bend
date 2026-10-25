@@ -76,8 +76,10 @@ export function constraintProblems(setup: Setup): { index: number; message: stri
 
 /** Points that must keep a fixed position offset to each other while solving. */
 export type PositionGroup = { ref: PointRef; offset: Vec2 }[]
-/** Points whose tangents must keep a fixed angular offset (radians) to each other while solving. */
-export type OrientationGroup = { ref: PointRef; angle: number }[]
+/** Points whose tangents must keep a fixed relation (optional mirror, then rotation by `angle` radians) to the group's shared tangent while solving. */
+export type OrientationGroup = { ref: PointRef; angle: number; mirror: boolean }[]
+
+const mirrorVec = (v: Vec2): Vec2 => [v[0], -v[1]]
 
 const rotate = (v: Vec2, deg: number): Vec2 => {
   const r = (deg * Math.PI) / 180
@@ -129,7 +131,7 @@ export function resolveSetup(setup: Setup): {
       if (src.posFree) dst.posFree = true
       else delete dst.posFree
     } else {
-      dst.orientation = src.orientation ? rotate(src.orientation, c.delta ?? 0) : null
+      dst.orientation = src.orientation ? rotate(c.mirror ? mirrorVec(src.orientation) : src.orientation, c.delta ?? 0) : null
     }
   }
 
@@ -144,11 +146,16 @@ export function resolveSetup(setup: Setup): {
     let dx = 0
     let dy = 0
     let deg = 0
+    let mirror = false
     while (cur) {
       if (cur.kind === 'position') {
         dx += cur.delta?.[0] ?? 0
         dy += cur.delta?.[1] ?? 0
-      } else deg += cur.delta ?? 0
+      } else {
+        // Compose "this link" after the links already collected below it.
+        deg += (mirror ? -1 : 1) * (cur.delta ?? 0)
+        if (cur.mirror) mirror = !mirror
+      }
       cur = constraintFor(setup, c.kind, cur.source)
     }
     if (c.kind === 'position') {
@@ -158,8 +165,8 @@ export function resolveSetup(setup: Setup): {
       positionGroups.set(root, group)
     } else {
       if (fpById(root).orientation) continue
-      const group = orientationGroups.get(root) ?? [{ ref: rootRef, angle: 0 }]
-      group.push({ ref: targetRef, angle: (deg * Math.PI) / 180 })
+      const group = orientationGroups.get(root) ?? [{ ref: rootRef, angle: 0, mirror: false }]
+      group.push({ ref: targetRef, angle: (deg * Math.PI) / 180, mirror })
       orientationGroups.set(root, group)
     }
   }

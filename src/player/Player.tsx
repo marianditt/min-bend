@@ -5,6 +5,15 @@ import { FrameCanvas } from './FrameCanvas'
 import { SegmentPlot } from './SegmentPlot'
 import { CoordinatePlot } from './CoordinatePlot'
 import { type CurveProbe, readProbe } from './canvasKit'
+import {
+  DEFAULT_VIEW_OPTIONS,
+  EXPORT_FORMATS,
+  type ExportFormat,
+  type Scene,
+  type ViewOptions,
+  downloadBlob,
+  exportScene,
+} from './scene'
 import { formatEnergy } from '../lib/format'
 import './player.css'
 
@@ -13,6 +22,15 @@ export interface PlayerProps {
   hidden: boolean[]
   onToggleHidden?: (curveIndex: number) => void
 }
+
+const VIEW_TOGGLES: { key: keyof ViewOptions; label: string }[] = [
+  { key: 'curves', label: 'Curves' },
+  { key: 'controlPoints', label: 'Control points' },
+  { key: 'interiorPoints', label: 'Interior points' },
+  { key: 'directions', label: 'Directions' },
+  { key: 'axes', label: 'Coordinate axes' },
+  { key: 'grid', label: 'Grid' },
+]
 
 const BASE_FPS = 30
 const MIN_SPEED = 0.1
@@ -114,6 +132,9 @@ export function Player({ frameSet, hidden, onToggleHidden }: PlayerProps) {
   const [split, setSplit] = useState(false)
   const [curveIndex, setCurveIndex] = useState(0)
   const [probe, setProbe] = useState<CurveProbe | null>(null)
+  const [options, setOptions] = useState<ViewOptions>(DEFAULT_VIEW_OPTIONS)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const sceneRef = useRef<Scene | null>(null)
 
   // Mirrors of state read inside the animation loop without re-subscribing.
   const indexRef = useRef(0)
@@ -193,6 +214,18 @@ export function Player({ frameSet, hidden, onToggleHidden }: PlayerProps) {
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [playing, total, lastIndex, commitIndex])
+
+  const download = async (format: ExportFormat) => {
+    const scene = sceneRef.current
+    if (!scene) return
+    setExportError(null)
+    try {
+      const blob = await exportScene(scene, format)
+      downloadBlob(blob, `min-bend-frame-${Math.min(indexRef.current, lastIndex) + 1}.${format}`)
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'The download failed.')
+    }
+  }
 
   const slowDown = () => setSpeed((prev) => Math.max(MIN_SPEED, prev / 2))
   const speedUp = () => setSpeed((prev) => Math.min(MAX_SPEED, prev * 2))
@@ -319,6 +352,40 @@ export function Player({ frameSet, hidden, onToggleHidden }: PlayerProps) {
           <span className="probe-hint">Click the curve to measure its tangent</span>
         )}
 
+        <details className="player__menu">
+          <summary className="btn btn--sm">Show</summary>
+          <div className="player__menu-panel" role="group" aria-label="Visible elements">
+            {VIEW_TOGGLES.map((toggle) => (
+              <label key={toggle.key}>
+                <input
+                  type="checkbox"
+                  checked={options[toggle.key]}
+                  onChange={(event) => setOptions((prev) => ({ ...prev, [toggle.key]: event.target.checked }))}
+                />
+                {toggle.label}
+              </label>
+            ))}
+          </div>
+        </details>
+
+        <details className="player__menu">
+          <summary className="btn btn--sm" aria-disabled={split}>
+            Download
+          </summary>
+          <div className="player__menu-panel" role="group" aria-label="Download this frame">
+            {split ? (
+              <span className="wiz-muted">Switch to the combined view to download.</span>
+            ) : (
+              EXPORT_FORMATS.map((format) => (
+                <button key={format.value} type="button" className="btn btn--sm" onClick={() => download(format.value)}>
+                  {format.label}
+                </button>
+              ))
+            )}
+            {exportError ? <span role="alert">{exportError}</span> : null}
+          </div>
+        </details>
+
         <button
           type="button"
           className={`btn btn--icon ${split ? 'is-on' : ''}`}
@@ -345,6 +412,8 @@ export function Player({ frameSet, hidden, onToggleHidden }: PlayerProps) {
             hidden={hidden}
             probe={probe}
             onProbe={setProbe}
+            options={options}
+            sceneRef={sceneRef}
           />
         )}
       </div>

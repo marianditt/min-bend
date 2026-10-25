@@ -1,25 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { MouseEvent as ReactMouseEvent } from 'react'
+import type { MouseEvent as ReactMouseEvent, RefObject } from 'react'
 import type { FrameSet, Vec2 } from '../solver/types'
-import { boundsForScale, fitScale, nextDisplayedScale, type Bounds, type EasePhase } from './scaleEase'
+import { boundsForScale, fitScale, nextDisplayedScale, type EasePhase } from './scaleEase'
 import {
   type CurveProbe,
   type Projector,
-  type Theme,
   LIGHT_THEME,
   DARK_THEME,
   closestOnCurves,
   computePtsBounds,
   makeProjector,
-  drawGrid,
-  drawAxes,
-  drawArrow,
-  drawControlPoint,
-  drawInteriorPoint,
-  curveColor,
-  readProbe,
   usePrefersDark,
 } from './canvasKit'
+import { type Scene, type ViewOptions, buildScene, renderScene } from './scene'
 
 export interface FrameCanvasProps {
   frameSet: FrameSet
@@ -28,99 +21,12 @@ export interface FrameCanvasProps {
   hidden: boolean[]
   probe: CurveProbe | null
   onProbe: (probe: CurveProbe | null) => void
+  options: ViewOptions
+  /** Receives the scene exactly as last drawn, so it can be exported. */
+  sceneRef?: RefObject<Scene | null>
 }
 
-function draw(
-  frameSet: FrameSet,
-  frameIndex: number,
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  bounds: Bounds,
-  theme: Theme,
-  dark: boolean,
-  hidden: boolean[],
-  probe: CurveProbe | null,
-): Projector {
-  ctx.fillStyle = theme.bg
-  ctx.fillRect(0, 0, width, height)
-
-  const project = makeProjector(bounds, width, height)
-  drawGrid(ctx, project, width, height, theme)
-  drawAxes(ctx, project, width, height, theme)
-
-  const { frames } = frameSet
-  if (frames.length === 0) return project
-  const index = Math.min(Math.max(frameIndex, 0), frames.length - 1)
-  const curves = frames[index].curves
-  const inputCurves = frameSet.meta.input?.curves ?? []
-
-  curves.forEach((pts, ci) => {
-    if (!pts || pts.length === 0) return
-    if (hidden[ci]) return
-    const color = curveColor(ci, dark)
-    const screen: [number, number][] = pts.map(([x, y]) => [project.toX(x), project.toY(y)])
-    const curve = inputCurves[ci]
-    const control = frames[index].controlIndices?.[ci] ?? []
-    const controlSet = new Set(control)
-
-    if (screen.length >= 2) {
-      ctx.strokeStyle = color
-      ctx.lineWidth = 2.4
-      ctx.lineJoin = 'round'
-      ctx.lineCap = 'round'
-      ctx.beginPath()
-      ctx.moveTo(screen[0][0], screen[0][1])
-      for (let i = 1; i < screen.length; i += 1) ctx.lineTo(screen[i][0], screen[i][1])
-      ctx.stroke()
-    }
-
-    for (let i = 0; i < screen.length; i += 1) {
-      if (!controlSet.has(i)) drawInteriorPoint(ctx, screen[i][0], screen[i][1], theme)
-    }
-
-    curve?.fixPoints.forEach((fp, pi) => {
-      const p = screen[control[pi]]
-      if (!p) return
-      if (fp.orientation) {
-        const len = Math.hypot(fp.orientation[0], fp.orientation[1])
-        if (len >= 1e-9) {
-          const ux = fp.orientation[0] / len
-          const uy = fp.orientation[1] / len
-          drawArrow(ctx, p[0], p[1], p[0] + ux * 30, p[1] - uy * 30, theme.orient)
-        }
-      }
-    })
-    curve?.fixPoints.forEach((fp, pi) => {
-      const p = screen[control[pi]]
-      if (p) drawControlPoint(ctx, p[0], p[1], fp.posFree === true, theme)
-    })
-  })
-
-  if (probe && !hidden[probe.curve]) {
-    const reading = readProbe(curves[probe.curve], probe)
-    if (reading) {
-      const x = project.toX(reading.point[0])
-      const y = project.toY(reading.point[1])
-      drawArrow(
-        ctx,
-        x,
-        y,
-        x + reading.tangent[0] * 48,
-        y - reading.tangent[1] * 48,
-        theme.probe,
-      )
-      ctx.strokeStyle = theme.probe
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.arc(x, y, 7, 0, Math.PI * 2)
-      ctx.stroke()
-    }
-  }
-  return project
-}
-
-export function FrameCanvas({ frameSet, frameIndex, playing, hidden, probe, onProbe }: FrameCanvasProps) {
+export function FrameCanvas({ frameSet, frameIndex, playing, hidden, probe, onProbe, options, sceneRef }: FrameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -174,9 +80,12 @@ export function FrameCanvas({ frameSet, frameIndex, playing, hidden, probe, onPr
     displayedScaleRef.current = result.scale
     phaseRef.current = result.phase
     const drawBounds = result.scale === target ? bounds : boundsForScale(bounds, target, result.scale)
-    projectorRef.current = draw(frameSet, frameIndex, ctx, size.width, size.height, drawBounds, theme, dark, hidden, probe)
+    const scene = buildScene(frameSet, frameIndex, size.width, size.height, drawBounds, theme, dark, hidden, probe, options)
+    renderScene(ctx, scene)
+    projectorRef.current = makeProjector(drawBounds, size.width, size.height)
+    if (sceneRef) sceneRef.current = scene
     canvas.dataset.scale = String(result.scale)
-  }, [frameSet, frameIndex, size, bounds, theme, playing, clampedIndex, dark, hidden, probe])
+  }, [frameSet, frameIndex, size, bounds, theme, playing, clampedIndex, dark, hidden, probe, options, sceneRef])
 
   const handleClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
@@ -189,7 +98,7 @@ export function FrameCanvas({ frameSet, frameIndex, playing, hidden, probe, onPr
       project.cx + (sx - size.width / 2) / project.scale,
       project.cy - (sy - size.height / 2) / project.scale,
     ]
-    const visible = (frameCurves ?? []).map((pts, ci) => (hidden[ci] ? null : pts))
+    const visible = (frameCurves ?? []).map((pts, ci) => (hidden[ci] || !options.curves ? null : pts))
     onProbe(closestOnCurves(visible, world))
   }
 

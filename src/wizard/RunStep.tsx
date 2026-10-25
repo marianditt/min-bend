@@ -74,8 +74,6 @@ export function RunStep({ api, solver, onRun, onCancel, onGoto }: RunStepProps) 
   const constantsProblem = useMemo(() => validateConstants(constants), [constants])
   const running = solver.status === 'running'
   const canRun = issues.length === 0 && constantsProblem === null && !running
-  const links = setup.constraints?.length ?? 0
-  const fixedLengths = setup.curves.filter((c) => typeof c.targetLength === 'number').length
 
   if (running) {
     return (
@@ -91,26 +89,6 @@ export function RunStep({ api, solver, onRun, onCancel, onGoto }: RunStepProps) 
 
   return (
     <div className="wiz-stack">
-      <section className="wiz-card">
-        <header className="wiz-card__head">
-          <h3>Your setup</h3>
-        </header>
-        <ul className="wiz-summary">
-          <li>
-            <span>{setup.curves.length} {setup.curves.length === 1 ? 'curve' : 'curves'}</span>
-            <button type="button" className="btn btn--sm btn--ghost" onClick={() => onGoto('points')}>Edit</button>
-          </li>
-          <li>
-            <span>{setup.curves.reduce((n, c) => n + c.fixPoints.length, 0)} points you defined</span>
-            <button type="button" className="btn btn--sm btn--ghost" onClick={() => onGoto('points')}>Edit</button>
-          </li>
-          <li>
-            <span>{fixedLengths} fixed {fixedLengths === 1 ? 'length' : 'lengths'}, {links} {links === 1 ? 'link' : 'links'}</span>
-            <button type="button" className="btn btn--sm btn--ghost" onClick={() => onGoto('points')}>Edit</button>
-          </li>
-        </ul>
-      </section>
-
       <section className="wiz-card">
         <header className="wiz-card__head">
           <h3>Detail</h3>

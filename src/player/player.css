@@ -386,3 +386,42 @@
 .curve-chip__eye:hover {
   opacity: 1;
 }
+
+/* View and download menus */
+
+.player__menu {
+  position: relative;
+}
+
+.player__menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.player__menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.player__menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 170px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-md);
+  font-size: var(--text-sm);
+}
+
+.player__menu-panel label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+}
