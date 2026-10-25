@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   computeAcceleration,
-  computeBendForces,
+  computeBendForce,
   computeSegments,
   dot,
   normalize,
@@ -179,13 +179,25 @@ describe('forces', () => {
     expect(accel[2]).toEqual([0, 0])
   })
 
-  it('bend forces push the middle point toward the chord and sum to zero', () => {
+  it('bend force is perpendicular to its tangent, toward the chord', () => {
     const pts: Vec2[] = [[0, 0], [1, 0.5], [2, 0]]
     const { lengths, unitVecs } = computeSegments(pts)
-    const { prev, cur, next } = computeBendForces(1, lengths, unitVecs, 1)
-    expect(cur[1]).toBeLessThan(0)
-    expect(prev[0] + cur[0] + next[0]).toBeCloseTo(0, 12)
-    expect(prev[1] + cur[1] + next[1]).toBeCloseTo(0, 12)
+    const f = computeBendForce(1, pts, lengths, unitVecs, 1)
+    expect(f[0]).toBeCloseTo(0, 12)
+    expect(f[1]).toBeLessThan(0)
+  })
+
+  it('a free curve between pinned points is pulled toward the straight line between them', () => {
+    const pts: Vec2[] = [[0, 0], [1, 1], [2, 0]]
+    const accel = computeAcceleration(pts, { ...model(3), bendStiffness: 0, lengthStiffness: 1 })
+    expect(accel[1][1]).toBeLessThan(0)
+  })
+
+  it('a free curve without pinned points contracts toward zero length', () => {
+    const pts: Vec2[] = [[0, 0], [1, 0], [2, 0]]
+    const accel = computeAcceleration(pts, { movable: [true, true, true], targetLength: null, constraints: [], lengthStiffness: 1 })
+    expect(accel[0][0]).toBeGreaterThan(0)
+    expect(accel[2][0]).toBeLessThan(0)
   })
 
   it('skips degenerate segments without producing NaN', () => {
