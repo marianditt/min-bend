@@ -4,10 +4,10 @@ import { DEFAULT_FLATNESS, type Constraint, type FixPoint, type PointId, type Se
 import { previewLayout } from '../solver/solve'
 import { NumberField } from '../ui/NumberField'
 import {
-  addConstraint,
   addCurve,
   addFixPoint,
   followPoint,
+  setFollowSource,
   moveFix,
   removeConstraintOn,
   removeCurve,
@@ -72,56 +72,51 @@ function Choice({
   )
 }
 
-/** Editor of one "follow another point" constraint: which point, and the fixed offset. */
-function FollowEditor({
-  setup,
-  api,
-  constraint,
-  label,
-}: {
-  setup: Setup
-  api: SetupApi
-  constraint: Constraint
-  label: string
-}) {
+/** The single place where the point to follow is chosen; position and direction both use it. */
+function FollowSource({ setup, api, target }: { setup: Setup; api: SetupApi; target: PointId }) {
   const [problem, setProblem] = useState<string | null>(null)
-  const { update } = api
-  const onSource = (source: PointId) => {
-    const next = addConstraint(setup, { ...constraint, source })
-    if (next === setup) {
+  const own = locate(setup, target)?.curve
+  const current = setup.constraints?.find((c) => c.target === target)?.source ?? ''
+  const onChange = (value: string) => {
+    const next = setFollowSource(setup, target, value || null)
+    if (next === setup && value !== current) {
       setProblem('That would make the points follow each other in a loop.')
       return
     }
     setProblem(null)
-    update(() => next)
+    api.update(() => next)
   }
-  const own = locate(setup, constraint.target)?.curve
-  // A point follows one point only: its other property already decided which.
-  const decided = setup.constraints?.find((c) => c.target === constraint.target && c.kind !== constraint.kind)?.source
+  return (
+    <div className="wiz-field">
+      <label className="wiz-select">
+        <span className="wiz-field__label">Follows</span>
+        <select value={current} onChange={(e) => onChange(e.target.value)}>
+          <option value="">No point</option>
+          {setup.curves.flatMap((c, ci) =>
+            ci === own
+              ? []
+              : c.fixPoints.map((fp, pi) => (
+                  <option key={fp.id} value={fp.id}>
+                    Curve {ci + 1} · Point {pi + 1}
+                  </option>
+                )),
+          )}
+        </select>
+      </label>
+      {problem ? (
+        <p className="wiz-problem" role="alert">
+          {problem}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+/** Offset of one "follow another point" constraint. */
+function FollowOffset({ api, constraint }: { api: SetupApi; constraint: Constraint }) {
+  const { update } = api
   return (
     <div className="wiz-follow">
-      <div className="wiz-chips" role="group" aria-label={`${label}: follow which point`}>
-        {setup.curves.flatMap((c, ci) =>
-          ci === own
-            ? []
-            : c.fixPoints.flatMap((fp, pi) =>
-                decided && fp.id !== decided
-                  ? []
-                  : [
-                      <button
-                        key={fp.id}
-                        type="button"
-                        className="wiz-chip"
-                        aria-pressed={fp.id === constraint.source}
-                        title={`Curve ${ci + 1} · Point ${pi + 1}`}
-                        onClick={() => onSource(fp.id)}
-                      >
-                        {ci + 1}.{pi + 1}
-                      </button>,
-                    ],
-              ),
-        )}
-      </div>
       {constraint.kind === 'orientation' ? (
         <NumberField
           label="Angle offset (degrees)"
@@ -151,11 +146,6 @@ function FollowEditor({
           />
         </div>
       )}
-      {problem ? (
-        <p className="wiz-problem" role="alert">
-          {problem}
-        </p>
-      ) : null}
     </div>
   )
 }
@@ -192,8 +182,7 @@ export function PointsStep({ api }: { api: SetupApi }) {
       return setFixOrientation(cleared, ref.curve, ref.point, mode === 'fixed' ? (fp.orientation ?? degreesToVector(0)) : null)
     })
 
-  const canFollow = setup.curves.length > 1
-
+  
   return (
     <div className="wiz-stack">
       {setup.curves.map((curve, ci) => {
@@ -287,6 +276,8 @@ export function PointsStep({ api }: { api: SetupApi }) {
                     const role = pointRole(pi, curve.fixPoints.length)
                     const posMode: Mode = posRule ? 'follow' : fp.posFree ? 'any' : 'fixed'
                     const dirMode: Mode = dirRule ? 'follow' : fp.orientation ? 'fixed' : 'any'
+                    const canFollow = setup.curves.length > 1
+                    const hasSource = Boolean(posRule ?? dirRule)
                     return (
                       <li
                         key={fp.id}
@@ -309,16 +300,17 @@ export function PointsStep({ api }: { api: SetupApi }) {
                           ) : null}
                         </div>
                         <div className="wiz-editor">
+                          {canFollow ? <FollowSource setup={setup} api={api} target={fp.id} /> : null}
                           <div className="wiz-field">
                             <span className="wiz-field__label">Position</span>
                             <Choice
                               label={`Position of point ${pi + 1}`}
                               value={posMode}
-                              options={modeOptions('position', canFollow)}
+                              options={modeOptions('position', hasSource)}
                               onChange={(m) => setPosition(fp, m)}
                             />
                             {posRule ? (
-                              <FollowEditor setup={setup} api={api} constraint={posRule} label={`Position of point ${pi + 1}`} />
+                              <FollowOffset api={api} constraint={posRule} />
                             ) : (
                               <div className="wiz-grid2">
                                 <NumberField
@@ -342,11 +334,11 @@ export function PointsStep({ api }: { api: SetupApi }) {
                             <Choice
                               label={`Direction of point ${pi + 1}`}
                               value={dirMode}
-                              options={modeOptions('direction', canFollow)}
+                              options={modeOptions('direction', hasSource)}
                               onChange={(m) => setDirection(fp, m)}
                             />
                             {dirRule ? (
-                              <FollowEditor setup={setup} api={api} constraint={dirRule} label={`Direction of point ${pi + 1}`} />
+                              <FollowOffset api={api} constraint={dirRule} />
                             ) : fp.orientation ? (
                               <NumberField
                                 label="Angle (degrees)"

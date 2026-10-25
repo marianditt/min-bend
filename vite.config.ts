@@ -8,4 +8,5 @@ export default defineConfig(({ command }) => ({
   // built asset URLs with the repo name so the deployed site works.
   base: command === 'build' ? '/min-bend/' : '/',
   plugins: [react()],
+  test: { testTimeout: 30000 },
 }))

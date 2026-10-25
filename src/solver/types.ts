@@ -123,9 +123,9 @@ export interface PhysicsConstants {
   gamma: number
   /** Integration step size. */
   h: number
-  /** Kinetic-energy threshold for termination. */
+  /** Threshold for termination: the kinetic energy must be below it and the largest force below its square root. */
   epsilon: number
-  /** Consecutive frames with KE below epsilon before termination. */
+  /** Consecutive frames with KE and force below epsilon before termination. */
   settleFrames: number
   /** Safety cap on the number of iterations. */
   maxIter: number
