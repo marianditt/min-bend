@@ -221,6 +221,8 @@ export function Player({ frameSet, hidden, onToggleHidden }: PlayerProps) {
   const safeIndex = Math.min(index, lastIndex)
   const currentFrame = frameSet.frames[safeIndex]
   const ke = currentFrame?.ke ?? 0
+  const pe = (currentFrame?.lengthEnergy ?? 0) + (currentFrame?.bendEnergy ?? 0)
+  const totalEnergy = currentFrame?.energy ?? ke + pe
   const canStep = total > 1
 
   const curveCount = Math.max(frameSet.meta.curveCount, 1)
@@ -260,6 +262,8 @@ export function Player({ frameSet, hidden, onToggleHidden }: PlayerProps) {
           </span>
           <span>{currentFrame?.curves.reduce((n, c) => n + c.length, 0) ?? 0} pts</span>
           <span>KE {formatEnergy(ke)}</span>
+          <span>PE {formatEnergy(pe)}</span>
+          <span>Total {formatEnergy(totalEnergy)}</span>
         </div>
       </div>
 

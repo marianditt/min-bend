@@ -277,6 +277,23 @@ export function followPoint(setup: Setup, kind: Constraint['kind'], target: Poin
   return setup
 }
 
+/**
+ * Sets the one point `target` follows (null = none) for all of its constraints.
+ * With no constraint yet, the position starts following. Unchanged when it would form a loop.
+ */
+export function setFollowSource(setup: Setup, target: PointId, source: PointId | null): Setup {
+  const own = (setup.constraints ?? []).filter((c) => c.target === target)
+  if (source === null) return own.reduce((s, c) => removeConstraintOn(s, c.kind, target), setup)
+  if (own.length === 0) return addConstraint(setup, { kind: 'position', source, target })
+  let next = setup
+  for (const c of own) {
+    const updated = addConstraint(next, { ...c, source })
+    if (updated === next) return setup
+    next = updated
+  }
+  return next
+}
+
 /** Changes the offset of an existing constraint: degrees for orientation, [dx, dy] for position. */
 export function setConstraintDelta(setup: Setup, kind: Constraint['kind'], target: PointId, delta: number | Vec2): Setup {
   const index = (setup.constraints ?? []).findIndex((c) => c.kind === kind && c.target === target)

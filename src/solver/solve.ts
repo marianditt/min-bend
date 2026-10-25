@@ -300,6 +300,7 @@ export function solve(
 
   const { onProgress, shouldCancel } = options
   const { h, epsilon, settleFrames, maxIter } = constants
+  const forceEpsilon = Math.sqrt(epsilon) // energy scales with the square of the force scale
 
   const linked = linkedKeys(orientationGroups)
   const chains = setup.curves.map((curve, ci) =>
@@ -415,6 +416,7 @@ export function solve(
     else kineticAllowance *= Math.exp(-2 * constants.gamma * h)
     energy = Math.min(energy, totalPotentialEnergy(chains, constants) + kineticAllowance)
 
+    const potentialBefore = totalPotentialEnergy(chains, constants)
     const before = snapshot(chains)
     const pointsBefore = countPoints()
     const setVelocities = (s: number): void => {
@@ -492,7 +494,21 @@ export function solve(
       ke *= factor * factor
     }
 
-    if (ke < epsilon) settleStreak += 1
+    // Rest only counts when forces could still turn potential energy into motion (e.g. at a turning
+    // point of the motion). The effective force is the potential drop per distance moved, so forces
+    // that the constraints block do not count.
+    let effectiveForce = Infinity
+    if (!countChanged) {
+      let moved = 0
+      chains.forEach((chain, ci) =>
+        chain.pts.forEach((p, k) => {
+          moved += (p[0] - before[ci].pts[k][0]) ** 2 + (p[1] - before[ci].pts[k][1]) ** 2
+        }),
+      )
+      effectiveForce = moved > 0 ? Math.max(0, potentialBefore - pe) / Math.sqrt(moved) : 0
+    }
+    const atRest = ke < epsilon && effectiveForce < forceEpsilon
+    if (atRest) settleStreak += 1
     else settleStreak = 0
 
     lastFrame = frameOf(i, ke)
