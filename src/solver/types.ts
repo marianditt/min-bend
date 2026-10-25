@@ -113,32 +113,28 @@ export interface Setup {
 
 /** Tunable physics / solver constants (exposed under "Advanced"). */
 export interface PhysicsConstants {
-  /** Bend-minimization force stiffness. */
-  kBend: number
-  /**
-   * Energy drain: the kinetic energy allowance on top of the potential energy
-   * is cooled by a fixed schedule, scaled by `exp(-2 * gamma * h)` each step. With 0
-   * the allowance stays constant.
-   */
-  gamma: number
-  /** Integration step size. */
-  h: number
-  /** Threshold for termination: the kinetic energy must be below it and the largest force below its square root. */
-  epsilon: number
-  /** Consecutive frames with KE and force below epsilon before termination. */
-  settleFrames: number
-  /** Safety cap on the number of iterations. */
-  maxIter: number
+  /** Friction: every point loses velocity at this rate (linear drag). 0 = nothing damps the motion. */
+  friction: number
+  /** Mass of a control point relative to an interior point (mass 1). Heavier control points settle more slowly, so the interior points find the optimal shape between them first. */
+  controlMass: number
+  /** Integration step; the solver shortens it further whenever stability requires. */
+  timeStep: number
+  /** The curve is at rest when its kinetic energy is below this. */
+  restThreshold: number
+  /** Safety cap on the number of steps. */
+  maxSteps: number
 }
 
 export const DEFAULT_CONSTANTS: PhysicsConstants = {
-  kBend: 1,
-  gamma: 0.1,
-  h: 0.01,
-  epsilon: 1e-4,
-  settleFrames: 30,
-  maxIter: 100000,
+  friction: 2,
+  controlMass: 4,
+  timeStep: 0.01,
+  restThreshold: 1e-4,
+  maxSteps: 100000,
 }
+
+/** Consecutive steps at rest before the simulation stops. */
+export const SETTLE_STEPS = 30
 
 /**
  * Fixed stabilization threshold (not user-adjustable): inputs within this
@@ -152,7 +148,7 @@ export interface Frame {
   i: number
   /** Kinetic energy at this frame. */
   ke: number
-  /** Total (kinetic + potential) energy at this frame; never higher than in the previous frame unless points were added or removed. */
+  /** Total (kinetic + potential) energy at this frame. */
   energy?: number
   /** Potential energy of the length terms, ½·k·(L - T)² summed over the curves. */
   lengthEnergy?: number
@@ -176,7 +172,7 @@ export interface FrameMeta {
   input: Setup
   constants: PhysicsConstants
   /** Why the simulation stopped. */
-  termination: 'ke' | 'maxIter'
+  termination: 'rest' | 'maxSteps'
   /** Number of frames retained for playback (≤ the true iteration count once decimated). */
   frameCount: number
   /** True solver iterations run. Optional so older results stay valid; falls back to frameCount. */

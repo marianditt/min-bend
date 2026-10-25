@@ -126,21 +126,19 @@ export function validateSetup(setup: Setup): ValidationIssue[] {
 /** Returns a human message when the physics constants are unusable, else null. */
 export function validateConstants(c: PhysicsConstants): string | null {
   const named: [string, number][] = [
-    ['Bend stiffness', c?.kBend],
-    ['Energy drain', c?.gamma],
-    ['Step size', c?.h],
-    ['Rest threshold', c?.epsilon],
-    ['Settle frames', c?.settleFrames],
-    ['Max iterations', c?.maxIter],
+    ['Friction', c?.friction],
+    ['Control point mass', c?.controlMass],
+    ['Step size', c?.timeStep],
+    ['Rest threshold', c?.restThreshold],
+    ['Step limit', c?.maxSteps],
   ]
   for (const [name, value] of named) {
     if (!Number.isFinite(value)) return `${name} must be a finite number.`
   }
-  if (c.kBend < 0) return 'Bend stiffness must be ≥ 0.'
-  if (c.gamma < 0) return 'Energy drain must be ≥ 0.'
-  if (!(c.h > 0)) return 'Step size must be > 0.'
-  if (c.epsilon < 0) return 'Rest threshold must be ≥ 0.'
-  if (c.settleFrames < 1) return 'Settle frames must be ≥ 1.'
-  if (c.maxIter < 1) return 'Max iterations must be ≥ 1.'
+  if (c.friction < 0) return 'Friction must be ≥ 0.'
+  if (!(c.controlMass > 0)) return 'Control point mass must be > 0.'
+  if (!(c.timeStep > 0)) return 'Step size must be > 0.'
+  if (c.restThreshold < 0) return 'Rest threshold must be ≥ 0.'
+  if (c.maxSteps < 1) return 'Step limit must be ≥ 1.'
   return null
 }

@@ -1,5 +1,5 @@
 import type { Curve, Frame, FrameMeta, FrameSet, PhysicsConstants, Setup, Vec2 } from './types'
-import { DEFAULT_CONSTANTS, DEFAULT_FLATNESS } from './types'
+import { DEFAULT_CONSTANTS, DEFAULT_FLATNESS, SETTLE_STEPS } from './types'
 import { add, dot, length, normalize, scale, sub } from './forces'
 import { validateConstants, validateSetup } from './validate'
 import {
@@ -47,6 +47,7 @@ interface ChainState {
   controls: ControlSpec[]
   targetLength: number | null
   weights: Weights
+  controlMass: number
   /** Replaced (never mutated) whenever the point count changes. */
   controlIndices: number[]
 }
@@ -58,14 +59,10 @@ const MAX_STEP_FRACTION = 0.25
 const SHORTNESS_PULL = 0.1
 /** Even a "flattest possible" curve keeps this much pull, so it cannot grow forever. */
 const MIN_SHORTNESS_SHARE = 0.02
-/** Bisection steps used to match the step size to the energy budget. */
-const BISECTIONS = 18
-/** Largest number of halvings/doublings while bracketing the step size. */
-const MAX_BRACKET_STEPS = 40
 
 /** Physics weights of one curve, derived from its flatness, length constraint and the resolution. */
 interface Weights {
-  bendWeight: number
+  bendStiffness: number
   lengthStiffness: number
 }
 
@@ -79,7 +76,7 @@ function curveWeights(curve: Curve, res: number, reference: number, hasTarget: b
   const flat = typeof raw === 'number' && Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : DEFAULT_FLATNESS
   return {
     // Bend energy is summed per joint; dividing by the spacing makes it independent of the resolution.
-    bendWeight: (2 * flat) / res,
+    bendStiffness: (2 * flat) / res,
     lengthStiffness: hasTarget
       ? LENGTH_STIFFNESS
       : (2 * SHORTNESS_PULL * Math.max(1 - flat, MIN_SHORTNESS_SHARE)) / Math.max(reference, res),
@@ -92,16 +89,19 @@ function buildModel(
   controlIndices: number[],
   targetLength: number | null,
   weights: Weights,
+  controlMass: number,
 ): ChainModel {
   const movable: boolean[] = new Array(total).fill(true)
+  const mass: number[] = new Array(total).fill(1)
   const constraints: PointConstraint[] = []
   controls.forEach((c, j) => {
     const index = controlIndices[j]
+    mass[index] = controlMass
     if (!c.movable) movable[index] = false
     if (c.dir) constraints.push({ index, dir: c.dir, collinear: false })
     else if (c.collinear) constraints.push({ index, dir: null, collinear: true })
   })
-  return { movable, targetLength, constraints, ...weights }
+  return { movable, mass, targetLength, constraints, ...weights }
 }
 
 /** Keys ("curve:point") of every point whose tangent is decided by an orientation group. */
@@ -154,6 +154,7 @@ function buildChain(
   curve: Curve,
   resolution: number,
   linked: (point: number) => boolean = () => false,
+  controlMass: number = DEFAULT_CONSTANTS.controlMass,
 ): ChainState {
   const res = safeResolution(resolution)
   const plan = planCurve(curve, res)
@@ -197,65 +198,36 @@ function buildChain(
 
   const reference = plan.spans.reduce((sum, span) => sum + span.length, 0)
   const weights = curveWeights(curve, res, reference, targetLength !== null)
-  const model = buildModel(pts.length, controls, plan.controlIndices, targetLength, weights)
+  const model = buildModel(pts.length, controls, plan.controlIndices, targetLength, weights, controlMass)
   const vel: Vec2[] = pts.map(() => [0, 0])
   enforceConstraints(pts, vel, model.constraints)
-  return { pts, vel, model, controls, targetLength, weights, controlIndices: plan.controlIndices }
+  return { pts, vel, model, controls, targetLength, weights, controlMass, controlIndices: plan.controlIndices }
 }
 
 function totalKineticEnergy(chains: ChainState[]): number {
   let ke = 0
-  for (const chain of chains) ke += computeKineticEnergy(chain.vel)
+  for (const chain of chains) ke += computeKineticEnergy(chain.vel, chain.model.mass)
   return ke
 }
 
-function potentialParts(chains: ChainState[], constants: PhysicsConstants): EnergyParts {
+function potentialParts(chains: ChainState[]): EnergyParts {
   const parts: EnergyParts = { length: 0, bend: 0 }
   for (const chain of chains) {
-    const p = computeEnergyParts(chain.pts, constants, chain.model)
+    const p = computeEnergyParts(chain.pts, chain.model)
     parts.length += p.length
     parts.bend += p.bend
   }
   return parts
 }
 
-function totalPotentialEnergy(chains: ChainState[], constants: PhysicsConstants): number {
-  const { length, bend } = potentialParts(chains, constants)
-  return length + bend
-}
-
-interface Snapshot {
-  pts: Vec2[]
-  vel: Vec2[]
-  model: ChainModel
-  controlIndices: number[]
-}
-
-const snapshot = (chains: ChainState[]): Snapshot[] =>
-  chains.map((c) => ({
-    pts: c.pts.map((p): Vec2 => [p[0], p[1]]),
-    vel: c.vel.map((v): Vec2 => [v[0], v[1]]),
-    model: c.model,
-    controlIndices: c.controlIndices,
-  }))
-
-function restore(chains: ChainState[], saved: Snapshot[]): void {
-  chains.forEach((c, i) => {
-    c.pts = saved[i].pts.map((p): Vec2 => [p[0], p[1]])
-    c.vel = saved[i].vel.map((v): Vec2 => [v[0], v[1]])
-    c.model = saved[i].model
-    c.controlIndices = saved[i].controlIndices
-  })
-}
-
 /**
  * Report progress with ~50ms throttling. The final sample (via `finalize`)
  * always reports 1.0 together with the true last iteration and energy, so the
- * UI never flashes the configured maxIter as if the run had used it all.
+ * UI never flashes the configured maxSteps as if the run had used it all.
  */
 function makeProgressReporter(
   onProgress: SolveOptions['onProgress'],
-  maxIter: number,
+  maxSteps: number,
   release: number,
 ): {
   report: (iteration: number, ke: number, force?: boolean) => void
@@ -272,7 +244,7 @@ function makeProgressReporter(
     const now = performance.now()
     if (!force && hasReported && now - lastReportTime < 50) return
     // Kinetic energy can rise again while energy converts back and forth; the bar must not run backwards.
-    shown = Math.max(shown, tracker.progress(iteration, maxIter))
+    shown = Math.max(shown, tracker.progress(iteration, maxSteps))
     onProgress(shown, iteration, ke)
     lastReportTime = now
     hasReported = true
@@ -299,12 +271,11 @@ export function solve(
   const { setup, positionGroups, orientationGroups } = resolveSetup(authored)
 
   const { onProgress, shouldCancel } = options
-  const { h, epsilon, settleFrames, maxIter } = constants
-  const forceEpsilon = Math.sqrt(epsilon) // energy scales with the square of the force scale
+  const { friction, timeStep, restThreshold, maxSteps } = constants
 
   const linked = linkedKeys(orientationGroups)
   const chains = setup.curves.map((curve, ci) =>
-    buildChain(curve, setup.resolution, (pi) => linked.has(`${ci}:${pi}`)),
+    buildChain(curve, setup.resolution, (pi) => linked.has(`${ci}:${pi}`), constants.controlMass),
   )
   enforceOrientationGroups(orientationGroups, chains)
   const res = safeResolution(setup.resolution)
@@ -313,17 +284,6 @@ export function solve(
 
   const captureCurves = (): Vec2[][] => chains.map((chain) => chain.pts.map((p): Vec2 => [p[0], p[1]]))
   const captureControls = (): number[][] => chains.map((chain) => chain.controlIndices)
-
-  const displace = (dirs: Vec2[][], s: number): void => {
-    chains.forEach((chain, ci) => {
-      const { pts, model } = chain
-      for (let k = 0; k < pts.length; k++) {
-        if (!model.movable[k]) continue
-        pts[k][0] += s * dirs[ci][k][0]
-        pts[k][1] += s * dirs[ci][k][1]
-      }
-    })
-  }
 
   // The kinematic projections: linked points, mesh density and control-point constraints.
   const project = (): void => {
@@ -350,7 +310,7 @@ export function solve(
       const indices = remesh(chain.pts, chain.vel, chain.controlIndices, res)
       if (indices !== chain.controlIndices) {
         chain.controlIndices = indices
-        chain.model = buildModel(chain.pts.length, chain.controls, indices, chain.targetLength, chain.weights)
+        chain.model = buildModel(chain.pts.length, chain.controls, indices, chain.targetLength, chain.weights, chain.controlMass)
       }
       equalizeSegments(chain.pts, chain.vel, chain.controlIndices)
       enforceConstraints(chain.pts, chain.vel, chain.model.constraints)
@@ -360,7 +320,7 @@ export function solve(
   }
 
   const frameOf = (i: number, ke: number): Frame => {
-    const { length, bend } = potentialParts(chains, constants)
+    const { length, bend } = potentialParts(chains)
     return {
       i,
       ke,
@@ -382,133 +342,78 @@ export function solve(
 
   const { report, finalize } = makeProgressReporter(
     onProgress,
-    maxIter,
-    constants.gamma * constants.h,
+    maxSteps,
+    friction * timeStep,
   )
   report(0, initialKe, true)
 
-  // Cap on the kinetic energy above the current potential energy; it follows an exponential cooling
-  // schedule, so the drain does not depend on the last total energy. The budget itself never rises.
-  let kineticAllowance = 0
-  let energy = totalPotentialEnergy(chains, constants)
-  let stepHint = 0
-  let termination: 'ke' | 'maxIter' = 'maxIter'
+  // Stability limit of the explicit integrator, re-evaluated every step. The stiffest bend mode
+  // oscillates with omega² ~ 16·stiffness/l² (l = shortest segment) and the collective length mode with
+  // omega² ~ 4·k·N (both divided by the lightest mass); the step must stay well below 1/omega.
+  const stableStep = (): number => {
+    let limit = Infinity
+    for (const { pts, model } of chains) {
+      let shortest = Infinity
+      for (let k = 0; k + 1 < pts.length; k++) {
+        shortest = Math.min(shortest, Math.hypot(pts[k + 1][0] - pts[k][0], pts[k + 1][1] - pts[k][1]))
+      }
+      shortest = Math.max(shortest, 0.05 * res)
+      const bend = (16 * (model.bendStiffness ?? 1)) / (shortest * shortest)
+      const tension = 4 * (model.lengthStiffness ?? 0) * pts.length
+      const omega = Math.sqrt((bend + tension) / Math.min(1, constants.controlMass) + friction * friction)
+      if (omega > 0) limit = Math.min(limit, 0.5 / omega)
+    }
+    return limit
+  }
+  let termination: 'rest' | 'maxSteps' = 'maxSteps'
   let settleStreak = 0
   let lastIter = 0
   let lastKe = initialKe
   let lastFrame: Frame = frameOf(0, initialKe)
 
-  for (let i = 1; i <= maxIter; i++) {
+  for (let i = 1; i <= maxSteps; i++) {
     if (shouldCancel?.()) {
       throw new CancelledError()
     }
 
-    // Direction: the force on every point, scaled so the largest error has unit weight.
-    const forces = chains.map((chain) => computeAcceleration(chain.pts, constants, chain.model))
-    chains.forEach((chain, ci) => verifyFinite(chain.pts, chain.vel, forces[ci]))
-    let maxForce = 0
-    for (const f of forces) for (const v of f) maxForce = Math.max(maxForce, length(v))
-    const dirs: Vec2[][] = forces.map((f) => f.map((v): Vec2 => (maxForce > 0 ? [v[0] / maxForce, v[1] / maxForce] : [0, 0])))
-    let dirSquares = 0
-    for (const d of dirs) for (const v of d) dirSquares += v[0] * v[0] + v[1] * v[1]
+    // Forces (bend + length error) divided by the masses give the accelerations.
+    const accels = chains.map((chain) => computeAcceleration(chain.pts, chain.model))
+    chains.forEach((chain, ci) => verifyFinite(chain.pts, chain.vel, accels[ci]))
 
-    if (i === 1) kineticAllowance = (0.5 * (MAX_STEP_FRACTION * res) ** 2 * dirSquares) / (h * h)
-    else kineticAllowance *= Math.exp(-2 * constants.gamma * h)
-    energy = Math.min(energy, totalPotentialEnergy(chains, constants) + kineticAllowance)
-
-    const potentialBefore = totalPotentialEnergy(chains, constants)
-    const before = snapshot(chains)
+    // Semi-implicit Euler with linear friction: unconditionally stable in the damping term.
+    const step = Math.min(timeStep, stableStep())
     const pointsBefore = countPoints()
-    const setVelocities = (s: number): void => {
-      chains.forEach((chain, ci) =>
-        chain.vel.forEach((v, k) => {
-          v[0] = (s * dirs[ci][k][0]) / h
-          v[1] = (s * dirs[ci][k][1]) / h
-        }),
-      )
-    }
-    const apply = (s: number): void => {
-      restore(chains, before)
-      setVelocities(s)
-      displace(dirs, s)
-      project()
-    }
-    // Excess energy of a step of size s: induced kinetic + resulting potential - budget.
-    const excess = (s: number): number => {
-      apply(s)
-      return (0.5 * s * s * dirSquares) / (h * h) + totalPotentialEnergy(chains, constants) - energy
-    }
-
-    // The step is the scale at which the energy of the new state matches the budget again.
-    const maxStep = MAX_STEP_FRACTION * res
-    let s = 0
-    if (maxForce > 0 && dirSquares > 0) {
-      let trial = Math.min(maxStep, stepHint > 0 ? stepHint : maxStep / 16)
-      let lo = 0
-      let hi = -1
-      if (excess(trial) > 0) {
-        hi = trial
-        for (let n = 0; n < MAX_BRACKET_STEPS; n++) {
-          trial /= 2
-          if (excess(trial) > 0) hi = trial
-          else {
-            lo = trial
-            break
-          }
+    const before = chains.map((chain) => chain.pts.map((p): Vec2 => [p[0], p[1]]))
+    const maxMove = MAX_STEP_FRACTION * res
+    chains.forEach((chain, ci) => {
+      const { pts, vel, model } = chain
+      for (let k = 0; k < pts.length; k++) {
+        if (!model.movable[k]) {
+          vel[k][0] = 0
+          vel[k][1] = 0
+          continue
         }
-      } else {
-        lo = trial
-        for (let n = 0; n < MAX_BRACKET_STEPS && trial < maxStep; n++) {
-          trial = Math.min(2 * trial, maxStep)
-          if (excess(trial) > 0) {
-            hi = trial
-            break
-          }
-          lo = trial
+        let vx = (vel[k][0] + step * accels[ci][k][0]) / (1 + step * friction)
+        let vy = (vel[k][1] + step * accels[ci][k][1]) / (1 + step * friction)
+        const move = step * Math.hypot(vx, vy)
+        if (move > maxMove) {
+          vx *= maxMove / move
+          vy *= maxMove / move
         }
+        vel[k][0] = vx
+        vel[k][1] = vy
+        pts[k][0] += step * vx
+        pts[k][1] += step * vy
       }
-      if (hi < 0) s = lo // the whole range is affordable: take the largest step
-      else if (lo === 0 && hi > 0 && excess(hi / 2 ** MAX_BRACKET_STEPS) > 0) s = 0 // already at a minimum
-      else {
-        for (let n = 0; n < BISECTIONS; n++) {
-          const mid = (lo + hi) / 2
-          if (excess(mid) > 0) hi = mid
-          else lo = mid
-        }
-        s = lo
-      }
-    }
-    stepHint = s
-    apply(s)
-    if (s === 0) for (const chain of chains) for (const v of chain.vel) { v[0] = 0; v[1] = 0 }
+    })
+    project()
     maxPoints = Math.max(maxPoints, countPoints())
     const countChanged =
-      countPoints() !== pointsBefore || chains.some((chain, ci) => chain.pts.length !== before[ci].pts.length)
+      countPoints() !== pointsBefore || chains.some((chain, ci) => chain.pts.length !== before[ci].length)
 
-    let ke = totalKineticEnergy(chains)
-    const pe = totalPotentialEnergy(chains, constants)
-    if (countChanged) energy = pe + ke // a change of discretization re-baselines the budget
-    // The kinetic energy is exactly what the budget leaves over; the projections must not change that.
-    if (ke > 0 && energy > pe && !countChanged) {
-      const factor = Math.sqrt((energy - pe) / ke)
-      for (const chain of chains) for (const v of chain.vel) { v[0] *= factor; v[1] *= factor }
-      ke *= factor * factor
-    }
-
-    // Rest only counts when forces could still turn potential energy into motion (e.g. at a turning
-    // point of the motion). The effective force is the potential drop per distance moved, so forces
-    // that the constraints block do not count.
-    let effectiveForce = Infinity
-    if (!countChanged) {
-      let moved = 0
-      chains.forEach((chain, ci) =>
-        chain.pts.forEach((p, k) => {
-          moved += (p[0] - before[ci].pts[k][0]) ** 2 + (p[1] - before[ci].pts[k][1]) ** 2
-        }),
-      )
-      effectiveForce = moved > 0 ? Math.max(0, potentialBefore - pe) / Math.sqrt(moved) : 0
-    }
-    const atRest = ke < epsilon && effectiveForce < forceEpsilon
+    const ke = totalKineticEnergy(chains)
+    // Rest: no motion left. A change of the point count is never rest.
+    const atRest = !countChanged && ke < restThreshold
     if (atRest) settleStreak += 1
     else settleStreak = 0
 
@@ -519,12 +424,12 @@ export function solve(
 
     report(i, ke)
 
-    if (settleStreak >= settleFrames) {
-      termination = 'ke'
+    if (settleStreak >= SETTLE_STEPS) {
+      termination = 'rest'
       break
     }
-    if (i >= maxIter) {
-      termination = 'maxIter'
+    if (i >= maxSteps) {
+      termination = 'maxSteps'
       break
     }
   }

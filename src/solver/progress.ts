@@ -2,7 +2,7 @@
 //
 // Two independent signals are combined so a run can never report completion
 // before it is actually finished:
-//   - frame progress: iteration / maxIter, the hard safety cap, and
+//   - frame progress: iteration / maxSteps, the hard safety cap, and
 //   - energy progress: how far the kinetic-energy envelope has fallen from its
 //     running peak (the simulation is converging as energy dissipates).
 //
@@ -22,7 +22,7 @@ function clamp01(value: number): number {
 /**
  * Tracks kinetic energy over a run. Feed every frame's KE to {@link observe},
  * then read {@link progress}. The envelope decays by `release` per observation,
- * so passing `gamma * h` ties the decay to the physical damping time constant.
+ * so passing `friction * timeStep` ties the decay to the physical damping time constant.
  */
 export class ProgressTracker {
   private readonly release: number
@@ -51,8 +51,8 @@ export class ProgressTracker {
    * Completion fraction in [0, MAX_RUNNING_PROGRESS]: the larger of the frame
    * budget burned and the energy dissipated from the peak.
    */
-  progress(iteration: number, maxIter: number): number {
-    const frame = maxIter > 0 ? iteration / maxIter : 1
+  progress(iteration: number, maxSteps: number): number {
+    const frame = maxSteps > 0 ? iteration / maxSteps : 1
     const energy = this.peak > 0 ? clamp01(1 - this.envelope / this.peak) : 0
     return Math.min(MAX_RUNNING_PROGRESS, Math.max(0, Math.max(frame, energy)))
   }

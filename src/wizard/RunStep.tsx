@@ -17,12 +17,11 @@ interface ConstantSpec {
 }
 
 const CONSTANT_SPECS: ConstantSpec[] = [
-  { key: 'kBend', label: 'Bend stiffness', hint: 'how strongly bends are punished', step: 0.1, min: 0 },
-  { key: 'gamma', label: 'Energy drain', hint: 'how fast motion dies out', step: 0.05, min: 0 },
-  { key: 'h', label: 'Time step', hint: 'smaller = slower but safer', step: 0.005, min: 0 },
-  { key: 'epsilon', label: 'Rest threshold', hint: 'stop when motion is below this', step: 1e-4, min: 0 },
-  { key: 'settleFrames', label: 'Rest steps', hint: 'steps below the threshold before stopping', step: 1, integer: true, min: 1 },
-  { key: 'maxIter', label: 'Step limit', hint: 'give up after this many steps', step: 1000, integer: true, min: 1 },
+  { key: 'friction', label: 'Friction', hint: 'how fast motion dies out', step: 0.1, min: 0 },
+  { key: 'controlMass', label: 'Control point mass', hint: 'heavier = control points settle more slowly than the points between them', step: 0.5, min: 0.1 },
+  { key: 'timeStep', label: 'Time step', hint: 'smaller = slower but safer', step: 0.005, min: 0 },
+  { key: 'restThreshold', label: 'Rest threshold', hint: 'stop when motion is below this', step: 1e-4, min: 0 },
+  { key: 'maxSteps', label: 'Step limit', hint: 'give up after this many steps', step: 1000, integer: true, min: 1 },
 ]
 
 export function ProgressRing({ fraction, iteration }: { fraction: number; iteration: number }) {

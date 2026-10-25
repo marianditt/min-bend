@@ -159,18 +159,17 @@ function sanitizeConstraints(value: unknown): Constraint[] {
 
 function sanitizeConstants(value: unknown): PhysicsConstants | null {
   if (!isRecord(value)) return null
-  // Unknown legacy keys (e.g. kLen) are dropped; missing or invalid ones fall back to defaults.
+  // Unknown legacy keys (e.g. kLen, gamma) are dropped; missing or invalid ones fall back to defaults.
   const pick = (key: keyof PhysicsConstants): number => {
     const v = value[key]
     return isFiniteNumber(v) ? v : DEFAULT_CONSTANTS[key]
   }
   return {
-    kBend: pick('kBend'),
-    gamma: pick('gamma'),
-    h: pick('h'),
-    epsilon: pick('epsilon'),
-    settleFrames: pick('settleFrames'),
-    maxIter: pick('maxIter'),
+    friction: pick('friction'),
+    controlMass: pick('controlMass'),
+    timeStep: pick('timeStep'),
+    restThreshold: pick('restThreshold'),
+    maxSteps: pick('maxSteps'),
   }
 }
 
