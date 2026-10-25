@@ -249,8 +249,8 @@ function followsOnCurve(setup: Setup, ci: number): Constraint[] {
  * only one source, so it keeps the source its other property already follows.
  * Otherwise the choice mirrors the curve's other points: if a neighbouring
  * point follows a point of curve X, `target` follows the point of X at the same
- * distance (else any point of X). Failing that, the first point of another
- * curve. Unchanged when there is nothing valid to follow.
+ * distance (else any point of X). Failing that, the first other point in the
+ * setup. Unchanged when there is nothing valid to follow.
  */
 export function followPoint(setup: Setup, kind: Constraint['kind'], target: PointId): Setup {
   const ref = locate(setup, target)
@@ -268,9 +268,10 @@ export function followPoint(setup: Setup, kind: Constraint['kind'], target: Poin
       if (same) candidates.push(same.id)
       candidates.push(...points.map((fp) => fp.id))
     }
-    candidates.push(...setup.curves.flatMap((c, ci) => (ci === ref.curve ? [] : c.fixPoints.map((fp) => fp.id))))
+    candidates.push(...setup.curves.flatMap((c) => c.fixPoints.map((fp) => fp.id)))
   }
   for (const source of candidates) {
+    if (source === target) continue
     const next = addConstraint(setup, { kind, source, target })
     if (next !== setup) return next
   }

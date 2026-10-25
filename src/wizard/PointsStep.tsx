@@ -75,7 +75,6 @@ function Choice({
 /** The single place where the point to follow is chosen; position and direction both use it. */
 function FollowSource({ setup, api, target }: { setup: Setup; api: SetupApi; target: PointId }) {
   const [problem, setProblem] = useState<string | null>(null)
-  const own = locate(setup, target)?.curve
   const current = setup.constraints?.find((c) => c.target === target)?.source ?? ''
   const onChange = (value: string) => {
     const next = setFollowSource(setup, target, value || null)
@@ -93,13 +92,15 @@ function FollowSource({ setup, api, target }: { setup: Setup; api: SetupApi; tar
         <select value={current} onChange={(e) => onChange(e.target.value)}>
           <option value="">No point</option>
           {setup.curves.flatMap((c, ci) =>
-            ci === own
-              ? []
-              : c.fixPoints.map((fp, pi) => (
-                  <option key={fp.id} value={fp.id}>
-                    Curve {ci + 1} · Point {pi + 1}
-                  </option>
-                )),
+            c.fixPoints.flatMap((fp, pi) =>
+              fp.id === target
+                ? []
+                : [
+                    <option key={fp.id} value={fp.id}>
+                      Curve {ci + 1} · Point {pi + 1}
+                    </option>,
+                  ],
+            ),
           )}
         </select>
       </label>
@@ -276,7 +277,7 @@ export function PointsStep({ api }: { api: SetupApi }) {
                     const role = pointRole(pi, curve.fixPoints.length)
                     const posMode: Mode = posRule ? 'follow' : fp.posFree ? 'any' : 'fixed'
                     const dirMode: Mode = dirRule ? 'follow' : fp.orientation ? 'fixed' : 'any'
-                    const canFollow = setup.curves.length > 1
+                    const canFollow = setup.curves.some((c) => c.fixPoints.some((candidate) => candidate.id !== fp.id))
                     const hasSource = Boolean(posRule ?? dirRule)
                     return (
                       <li

@@ -86,9 +86,16 @@ describe('stable point ids', () => {
 })
 
 describe('follow rules', () => {
-  it('refuses a source on the same curve', () => {
+  it('allows a source on the same curve', () => {
     const s = twoCurves()
-    expect(addConstraint(s, { kind: 'position', source: 'p1', target: 'p2' })).toBe(s)
+    expect(addConstraint(s, { kind: 'position', source: 'p1', target: 'p2' }).constraints).toEqual([
+      { kind: 'position', source: 'p1', target: 'p2' },
+    ])
+  })
+
+  it('refuses a point to follow itself', () => {
+    const s = twoCurves()
+    expect(addConstraint(s, { kind: 'position', source: 'p1', target: 'p1' })).toBe(s)
   })
 
   it('refuses a second, different source for the same point', () => {
@@ -114,9 +121,10 @@ describe('follow rules', () => {
     expect(locate(next, next.constraints![0].source)?.curve).toBe(0)
   })
 
-  it('does nothing with a single curve', () => {
+  it('picks another point on the same curve when it is the only curve', () => {
     const s = base()
-    expect(followPoint(s, 'position', 'p2')).toBe(s)
+    const next = followPoint(s, 'position', 'p2')
+    expect(next.constraints).toEqual([{ kind: 'position', source: 'p1', target: 'p2' }])
   })
 })
 

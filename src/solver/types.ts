@@ -72,7 +72,7 @@ export interface PointRef {
 }
 
 interface ConstraintBase {
-  /** The followed point (possibly on another curve). */
+  /** The followed point (which must be different from the target). */
   source: PointId
   /** The point whose own input for this property is replaced. */
   target: PointId

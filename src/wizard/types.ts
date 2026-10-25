@@ -16,7 +16,7 @@ export const STEPS: StepInfo[] = [
     id: 'points',
     label: 'Points',
     title: 'Where must the curve go?',
-    help: 'Each point can be fixed, free, or follow a point of another curve. Choose how long a curve must be, or whether it should prefer being short or flat.',
+    help: 'Each point can be fixed, free, or follow another point. Choose how long a curve must be, or whether it should prefer being short or flat.',
   },
   {
     id: 'sketch',

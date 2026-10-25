@@ -58,8 +58,6 @@ export function constraintProblems(setup: Setup): { index: number; message: stri
       out.push({ index: i, message: 'A constrained point no longer exists.' })
     } else if (c.source === c.target) {
       out.push({ index: i, message: 'A point cannot be constrained to itself.' })
-    } else if (locate(setup, c.source)!.curve === locate(setup, c.target)!.curve) {
-      out.push({ index: i, message: `${pointLabel(setup, c.target)} can only follow a point of another curve.` })
     } else if (list.some((o) => o.target === c.target && o.source !== c.source)) {
       out.push({ index: i, message: `${pointLabel(setup, c.target)} can only follow one other point.` })
     } else if (list.findIndex((o) => o.kind === c.kind && o.target === c.target) !== i) {
