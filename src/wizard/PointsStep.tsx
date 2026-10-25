@@ -216,15 +216,13 @@ export function PointsStep({ api }: { api: SetupApi }) {
                 </span>
               </button>
               <div className="wiz-row">
-                {setup.curves.length > 1 ? (
-                  <button
-                    type="button"
-                    className="btn btn--sm btn--ghost btn--danger"
-                    onClick={() => update((s) => removeCurve(s, ci))}
-                  >
-                    Remove curve
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  className="btn btn--sm btn--ghost btn--danger"
+                  onClick={() => update((s) => removeCurve(s, ci))}
+                >
+                  {setup.curves.length > 1 ? 'Remove curve' : 'Reset curve'}
+                </button>
               </div>
             </header>
 

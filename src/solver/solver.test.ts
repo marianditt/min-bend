@@ -29,10 +29,9 @@ const chain = (points: FixPoint[], resolution = 1, extra: Partial<Curve> = {}): 
 const two = (start: Vec2, end: Vec2, d0: Vec2 | null, d1: Vec2 | null, resolution = 1): Setup =>
   chain([fp(start, d0), fp(end, d1)], resolution)
 
-const plainInit = { random: () => 0.5 }
 const fast = { ...DEFAULT_CONSTANTS, maxIter: 20000 }
 const last = (setup: Setup, constants = fast): Vec2[] =>
-  solve(setup, constants, plainInit).frames.at(-1)!.curves[0]
+  solve(setup, constants).frames.at(-1)!.curves[0]
 
 const segLens = (p: Vec2[]): number[] => computeSegments(p).lengths
 const turn = (p: Vec2[], k: number): number => {
@@ -120,7 +119,7 @@ describe('discretization by resolution', () => {
 
   it('shares fix points between spans and reports control indices', () => {
     const setup = chain([fp([0, 0]), fp([3, 0]), fp([3, 4])], 1)
-    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 5 }, plainInit)
+    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 5 })
     expect(result.frames[0].controlIndices).toEqual([[0, 3, 7]])
     expect(result.frames[0].curves[0]).toHaveLength(8)
     expect(planCurve(setup.curves[0], 1).segmentCount).toBe(7)
@@ -137,7 +136,7 @@ describe('discretization by resolution', () => {
 describe('initialization (frame 0)', () => {
   it('satisfies orientation constraints exactly and starts at rest', () => {
     const setup = two([0, 0], [10, 0], [0, 1], [0, -1])
-    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit)
+    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 1 })
     const p = result.frames[0].curves[0]
     expect(p[0]).toEqual([0, 0])
     expect(p.at(-1)).toEqual([10, 0])
@@ -199,7 +198,7 @@ describe('forces', () => {
 describe('control point kinds', () => {
   it('fixed position + fixed orientation: stays put on its tangent line', () => {
     const setup = chain([fp([0, 0], [0, 1]), fp([4, 2], [1, 0]), fp([8, 0], [0, -1])], 1)
-    const result = solve(setup, fast, plainInit)
+    const result = solve(setup, fast)
     const ci = result.frames.at(-1)!.controlIndices[0][1]
     for (const frame of result.frames) {
       const p = frame.curves[0]
@@ -214,7 +213,7 @@ describe('control point kinds', () => {
 
   it('fixed position + free orientation: incoming and outgoing directions are equal', () => {
     const setup = chain([fp([0, 0], [0, 1]), fp([4, 2]), fp([8, 0], [0, -1])], 1)
-    const result = solve(setup, fast, plainInit)
+    const result = solve(setup, fast)
     const ci = result.frames.at(-1)!.controlIndices[0][1]
     for (const frame of result.frames) {
       const p = frame.curves[0]
@@ -241,7 +240,7 @@ describe('control point kinds', () => {
 
   it('free position + fixed orientation: moves to reduce bend while keeping its tangent', () => {
     const setup = chain([fp([0, 0], [1, 0]), fp([4, 3], [1, 0], true), fp([8, 0], [1, 0])], 1)
-    const result = solve(setup, fast, plainInit)
+    const result = solve(setup, fast)
     const ci = result.frames.at(-1)!.controlIndices[0][1]
     const first = result.frames[0].curves[0]
     const final = result.frames.at(-1)!.curves[0]
@@ -263,7 +262,7 @@ describe('control point kinds', () => {
   })
 
   it('keeps first/last orientations fixed across all frames', () => {
-    const result = solve(two([0, 0], [10, 0], [0, 1], [0, -1]), fast, plainInit)
+    const result = solve(two([0, 0], [10, 0], [0, 1], [0, -1]), fast)
     for (const frame of result.frames) {
       const p = frame.curves[0]
       expect(p[1][0]).toBeCloseTo(0, 9)
@@ -275,13 +274,13 @@ describe('control point kinds', () => {
 
 describe('termination', () => {
   it('stops a static chain via KE threshold after settleFrames', () => {
-    const result = solve(two([0, 0], [4, 0], null, null), DEFAULT_CONSTANTS, plainInit)
+    const result = solve(two([0, 0], [4, 0], null, null), DEFAULT_CONSTANTS)
     expect(result.meta.termination).toBe('ke')
     expect(result.meta.iterations).toBe(DEFAULT_CONSTANTS.settleFrames)
   })
 
   it('respects maxIter when it is reached first', () => {
-    const result = solve(two([0, 0], [10, 0], [0, 1], [0, -1]), { ...DEFAULT_CONSTANTS, maxIter: 5 }, plainInit)
+    const result = solve(two([0, 0], [10, 0], [0, 1], [0, -1]), { ...DEFAULT_CONSTANTS, maxIter: 5 })
     expect(result.meta.termination).toBe('maxIter')
     expect(result.meta.iterations).toBe(5)
   })
@@ -291,11 +290,15 @@ describe('termination', () => {
     expect(result.frames.every((f) => f.curves[0].flat().every(Number.isFinite))).toBe(true)
   })
 
-  it('lays out a non-degenerate loop when anchors coincide', () => {
-    const p = last(two([0, 0], [0, 0], [0, 1], [0, -1]))
+  it('lays out a loop when anchors coincide and never ends with more energy than it started with', () => {
+    const result = solve(two([0, 0], [0, 0], [0, 1], [0, -1]), fast)
+    const p = result.frames[0].curves[0]
     expect(p.flat().every(Number.isFinite)).toBe(true)
     expect(Math.max(...p.map((q) => Math.hypot(q[0], q[1])))).toBeGreaterThan(0.5)
     expect(Math.min(...segLens(p))).toBeGreaterThan(0.1)
+    const end = result.frames.at(-1)!
+    expect(end.curves[0].flat().every(Number.isFinite)).toBe(true)
+    expect(end.energy!).toBeLessThan(result.frames[0].energy!)
   })
 })
 
@@ -305,29 +308,37 @@ describe('cancellation', () => {
     expect(() =>
       solve(two([0, 0], [10, 0], [0, 1], [0, -1]), { ...DEFAULT_CONSTANTS, maxIter: 20000 }, {
         shouldCancel: () => ++calls > 10,
-        ...plainInit,
       }),
     ).toThrow(CancelledError)
   })
 })
 
-describe('randomized initialization', () => {
+describe('deterministic start', () => {
   const setup = two([0, 0], [10, 0], [1, 0], [1, 0])
 
-  it('perturbs interior points perpendicular to the chord and keeps anchors exact', () => {
-    const frame = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 1 }, { random: () => 0.9 }).frames[0]
-    const p = frame.curves[0]
-    expect(p[0]).toEqual([0, 0])
-    expect(p.at(-1)).toEqual([10, 0])
-    expect(p.slice(2, -2).some((q) => Math.abs(q[1]) > 1e-6)).toBe(true)
+  it('starts motionless and identically on every run, with only potential energy', () => {
+    const a = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 5 })
+    const b = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 5 })
+    expect(a.frames[0].ke).toBe(0)
+    expect(a.frames[0].curves).toEqual(b.frames[0].curves)
+    expect(a.frames.at(-1)!.curves).toEqual(b.frames.at(-1)!.curves)
   })
 
-  it('still satisfies orientation constraints on every frame when randomized', () => {
-    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 300 }, { random: () => 0.1 })
+  it('satisfies orientation constraints on every frame', () => {
+    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 300 })
     for (const frame of result.frames) {
       expect(frame.curves[0][1][1]).toBeCloseTo(0, 9)
       expect(frame.curves[0].at(-2)![1]).toBeCloseTo(0, 9)
     }
+  })
+
+  it('tracks length and bend energy separately and they add up with the kinetic energy', () => {
+    const bent = chain([fp([0, 0], [1, 0]), fp([10, 0], [1, 0])], 1, { targetLength: 14 })
+    bent.curves[0].spans = [[[5, 6]]]
+    const f = solve(bent, { ...DEFAULT_CONSTANTS, maxIter: 50 }).frames[0]
+    expect(f.lengthEnergy!).toBeGreaterThan(0)
+    expect(f.bendEnergy!).toBeGreaterThan(0)
+    expect(f.energy!).toBeCloseTo(f.lengthEnergy! + f.bendEnergy! + f.ke, 9)
   })
 })
 
@@ -384,7 +395,7 @@ describe('multiple curves', () => {
         { fixPoints: [fp([0, 5]), fp([6, 5])], spans: [[]] },
       ],
     }
-    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 5 }, plainInit)
+    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 5 })
     expect(result.meta.curveCount).toBe(2)
     expect(result.frames[0].curves.map((c) => c.length)).toEqual([4, 7])
     expect(result.meta.maxPoints).toBe(11)
@@ -392,7 +403,7 @@ describe('multiple curves', () => {
 
   it('previewPose matches the solved frame 0', () => {
     const setup = chain([fp([0, 0], [0, 1]), fp([4, 2]), fp([8, 0], [0, -1])], 1)
-    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 1 }, plainInit)
+    const result = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 1 })
     expect(previewPose(setup)).toEqual(result.frames[0].curves)
   })
 })
@@ -407,8 +418,8 @@ describe('target path length', () => {
   })
 
   it('produces identical frames when targetLength is null vs absent', () => {
-    const a = solve(chain([fp([0, 0]), fp([4, 0])], 1, { targetLength: null }), { ...DEFAULT_CONSTANTS, maxIter: 20 }, plainInit)
-    const b = solve(chain([fp([0, 0]), fp([4, 0])], 1), { ...DEFAULT_CONSTANTS, maxIter: 20 }, plainInit)
+    const a = solve(chain([fp([0, 0]), fp([4, 0])], 1, { targetLength: null }), { ...DEFAULT_CONSTANTS, maxIter: 20 })
+    const b = solve(chain([fp([0, 0]), fp([4, 0])], 1), { ...DEFAULT_CONSTANTS, maxIter: 20 })
     expect(a.frames).toEqual(b.frames)
   })
 })
@@ -449,7 +460,6 @@ describe('progress tracking', () => {
     const samples: { progress: number; iteration: number }[] = []
     const result = solve(setup, DEFAULT_CONSTANTS, {
       onProgress: (progress, iteration) => samples.push({ progress, iteration }),
-      ...plainInit,
     })
 
     expect(result.meta.termination).toBe('ke')
@@ -552,7 +562,7 @@ describe('point constraints', () => {
     const angle = (v: Vec2) => (Math.atan2(v[1], v[0]) * 180) / Math.PI
 
     it.each([0, 30])('B keeps A\'s actual tangent rotated by %i degrees in the result', (delta) => {
-      const r = solve(follow(delta), { ...DEFAULT_CONSTANTS, maxIter: 20000 }, plainInit)
+      const r = solve(follow(delta), { ...DEFAULT_CONSTANTS, maxIter: 20000 })
       const f = r.frames.at(-1)!
       const [ia, ib] = [f.controlIndices[0][1], f.controlIndices[1][1]]
       const ta = angle(tangent(f.curves[0], ia))
@@ -565,10 +575,10 @@ describe('point constraints', () => {
     })
 
     it('the other curve pulls on the source: the shared tangent differs from the unlinked result', () => {
-      const linked = solve(follow(0), { ...DEFAULT_CONSTANTS, maxIter: 20000 }, plainInit).frames.at(-1)!
+      const linked = solve(follow(0), { ...DEFAULT_CONSTANTS, maxIter: 20000 }).frames.at(-1)!
       const alone = follow(0)
       delete alone.constraints
-      const free = solve(alone, { ...DEFAULT_CONSTANTS, maxIter: 20000 }, plainInit).frames.at(-1)!
+      const free = solve(alone, { ...DEFAULT_CONSTANTS, maxIter: 20000 }).frames.at(-1)!
       const a = angle(tangent(linked.curves[0], linked.controlIndices[0][1]))
       const b = angle(tangent(free.curves[0], free.controlIndices[0][1]))
       expect(Math.abs(a - b)).toBeGreaterThan(1)
@@ -583,7 +593,7 @@ describe('dynamic point count', () => {
     // A bulging guide point makes the span long; minimizing bend straightens it.
     const setup = chain([fp([0, 0], [1, 0]), fp([10, 0], [1, 0])], 1)
     setup.curves[0].spans = [[[5, 6]]]
-    const r = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 30000 }, plainInit)
+    const r = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 30000 })
     const c = counts(r)
     expect(c[0]).toBeGreaterThan(c.at(-1)!)
     expect(c.at(-1)).toBeGreaterThanOrEqual(4)
@@ -591,7 +601,7 @@ describe('dynamic point count', () => {
 
   it('gains interior points when the curve stretches', () => {
     const setup = chain([fp([0, 0], [0, 1]), fp([4, 0], [0, -1])], 1, { targetLength: 14 })
-    const r = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 30000 }, plainInit)
+    const r = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 30000 })
     const c = counts(r)
     expect(c.at(-1)).toBeGreaterThan(c[0])
     const total = segLens(r.frames.at(-1)!.curves[0]).reduce((a, b) => a + b, 0)
@@ -601,7 +611,7 @@ describe('dynamic point count', () => {
   it('keeps control indices consistent with the point count in every frame', () => {
     const setup = chain([fp([0, 0], [1, 0]), fp([5, 0]), fp([10, 0], [1, 0])], 1)
     setup.curves[0].spans = [[[2.5, 4]], [[7.5, -4]]]
-    const r = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 5000 }, plainInit)
+    const r = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 5000 })
     for (const f of r.frames) {
       const idx = f.controlIndices[0]
       expect(idx[0]).toBe(0)
@@ -614,7 +624,7 @@ describe('dynamic point count', () => {
   it('keeps fixed control points exactly in place while points come and go', () => {
     const setup = chain([fp([0, 0], [1, 0]), fp([10, 0], [1, 0])], 1)
     setup.curves[0].spans = [[[5, 6]]]
-    const r = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 3000 }, plainInit)
+    const r = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 3000 })
     for (const f of r.frames) {
       expect(f.curves[0][0]).toEqual([0, 0])
       expect(f.curves[0].at(-1)).toEqual([10, 0])
@@ -645,7 +655,7 @@ describe('robustness', () => {
         targetLength: pick<number | null>([null, null, 0.5, 5, 40]),
       })
       if (validateSetup(setup).length > 0) continue
-      const r = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 600 }, { random: rand })
+      const r = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 600 })
       for (const f of r.frames) {
         for (const curve of f.curves) for (const q of curve) expect(Number.isFinite(q[0] + q[1])).toBe(true)
       }
@@ -665,7 +675,7 @@ describe('energy', () => {
     return setup
   }
   const energies = (constants: Partial<typeof DEFAULT_CONSTANTS>, setup = bent()) =>
-    solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 4000, ...constants }, plainInit)
+    solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 4000, ...constants })
       .frames.filter((f) => f.energy !== undefined)
 
   it('never lets the total energy rise, with or without drain', () => {
@@ -696,7 +706,7 @@ describe('energy', () => {
 describe('shortness vs flatness', () => {
   const total = (flatness: number): number => {
     const setup = chain([fp([0, 0], [0, 1]), fp([4, 0], [0, -1])], 1, { flatness })
-    const f = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 20000 }, plainInit).frames.at(-1)!
+    const f = solve(setup, { ...DEFAULT_CONSTANTS, maxIter: 20000 }).frames.at(-1)!
     return segLens(f.curves[0]).reduce((a, b) => a + b, 0)
   }
 

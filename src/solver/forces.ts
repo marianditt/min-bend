@@ -120,31 +120,39 @@ export interface ChainModel {
   constraints: PointConstraint[]
   /** Multiplier of the bend stiffness for this chain (default 1). */
   bendWeight?: number
-  /** Constant tension pulling a chain without a target length shorter (default 0). */
-  shortness?: number
+  /**
+   * Stiffness k of the length energy ½·k·(L − T)², where T is the target
+   * length, or 0 when the length is free (default 0 = no length energy).
+   */
+  lengthStiffness?: number
 }
 
-/**
- * Stiffness of the whole-curve length constraint. The resulting tension is the
- * same on every segment: segments are free to shrink and grow, only the sum is
- * pulled toward the target.
- */
+/** Stiffness of the length energy of a chain with a target length. */
 export const LENGTH_STIFFNESS = 20
 
-/** Tension along the whole chain: toward the target length, or a constant pull when there is none. */
-function lengthTension(lengths: number[], model: ChainModel): number {
-  if (model.targetLength === null) return model.shortness ?? 0
+function totalLength(lengths: number[]): number {
   let total = 0
   for (const len of lengths) total += len
-  return (total - model.targetLength) * LENGTH_STIFFNESS
+  return total
+}
+
+/** Tension along the whole chain: the derivative of the length energy with respect to the length. */
+function lengthTension(lengths: number[], model: ChainModel): number {
+  return (model.lengthStiffness ?? 0) * (totalLength(lengths) - (model.targetLength ?? 0))
+}
+
+/** The two parts of a chain's potential energy, tracked separately. */
+export interface EnergyParts {
+  length: number
+  bend: number
 }
 
 /**
  * Potential energy of a chain: bend energy kBend * (1 - cos) summed over every
- * joint, plus the length energy whose gradient is the tension used by
- * {@link computeAcceleration}.
+ * joint, plus the length energy ½·k·(L - T)² (T = 0 when the length is free).
+ * Their gradients are the forces used by {@link computeAcceleration}.
  */
-export function computePotentialEnergy(pts: Vec2[], constants: PhysicsConstants, model: ChainModel): number {
+export function computeEnergyParts(pts: Vec2[], constants: PhysicsConstants, model: ChainModel): EnergyParts {
   const { lengths, unitVecs } = computeSegments(pts)
   const kBend = constants.kBend * (model.bendWeight ?? 1)
   let bend = 0
@@ -152,13 +160,13 @@ export function computePotentialEnergy(pts: Vec2[], constants: PhysicsConstants,
     if (lengths[j - 1] < EPS_STABILIZE || lengths[j] < EPS_STABILIZE) continue
     bend += 1 - Math.max(-1, Math.min(1, dot(unitVecs[j - 1], unitVecs[j])))
   }
-  let total = 0
-  for (const len of lengths) total += len
-  const stretch =
-    model.targetLength === null
-      ? (model.shortness ?? 0) * total
-      : 0.5 * LENGTH_STIFFNESS * (total - model.targetLength) ** 2
-  return kBend * bend + stretch
+  const delta = totalLength(lengths) - (model.targetLength ?? 0)
+  return { bend: kBend * bend, length: 0.5 * (model.lengthStiffness ?? 0) * delta * delta }
+}
+
+export function computePotentialEnergy(pts: Vec2[], constants: PhysicsConstants, model: ChainModel): number {
+  const { length, bend } = computeEnergyParts(pts, constants, model)
+  return length + bend
 }
 
 /** Total acceleration of every movable point of a chain (mass = 1). Friction is not a force: see the solver's energy drain. */
@@ -210,6 +218,14 @@ export function computeAcceleration(
   return accel
 }
 
+/** A neighbor that ends up on the wrong side of its tangent keeps a fraction of its distance instead of collapsing onto the point, which would hide its bend energy. */
+const WRONG_SIDE_KEEP = 0.3
+
+function alongOrFloor(seg: Vec2, d: Vec2): number {
+  const along = dot(seg, d)
+  return along > 0 ? along : WRONG_SIDE_KEEP * length(seg)
+}
+
 /**
  * Enforce control-point constraints by projection:
  *  - fixed orientation d: both neighbors lie on the line through the point
@@ -225,12 +241,12 @@ export function enforceConstraints(pts: Vec2[], vel: Vec2[], constraints: PointC
     if (c.dir) {
       const d = c.dir
       if (i > 0) {
-        const proj = Math.max(dot(sub(pts[i], pts[i - 1]), d), 0)
+        const proj = alongOrFloor(sub(pts[i], pts[i - 1]), d)
         pts[i - 1] = sub(pts[i], scale(d, proj))
         vel[i - 1] = scale(d, dot(vel[i - 1], d))
       }
       if (i < last) {
-        const proj = Math.max(dot(sub(pts[i + 1], pts[i]), d), 0)
+        const proj = alongOrFloor(sub(pts[i + 1], pts[i]), d)
         pts[i + 1] = add(pts[i], scale(d, proj))
         vel[i + 1] = scale(d, dot(vel[i + 1], d))
       }

@@ -48,10 +48,12 @@ export function addCurveThrough(setup: Setup, positions: Vec2[]): Setup {
 
 export function removeCurve(setup: Setup, ci: number): Setup {
   const curve = setup.curves[ci]
-  if (!curve || setup.curves.length <= 1) return setup
+  if (!curve) return setup
   const next = cloneSetup(setup)
   next.curves.splice(ci, 1)
   dropConstraintsOn(next, new Set(curve.fixPoints.map((fp) => fp.id)))
+  // A setup always has a curve: deleting the last one leaves a fresh default curve.
+  if (next.curves.length === 0) next.curves.push(createCurve(next))
   return next
 }
 

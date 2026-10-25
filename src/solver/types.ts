@@ -116,9 +116,9 @@ export interface PhysicsConstants {
   /** Bend-minimization force stiffness. */
   kBend: number
   /**
-   * Energy drain: each step removes a fraction `gamma * h` of the velocity, so
-   * the total (kinetic + potential) energy keeps falling. The solver never lets
-   * that total energy rise.
+   * Energy drain: each step removes `2 * gamma * h` times the kinetic energy from
+   * the total (kinetic + potential) energy budget, so it keeps falling. With 0 the
+   * total energy is conserved. Each step converts the budget into kinetic energy.
    */
   gamma: number
   /** Integration step size. */
@@ -154,6 +154,10 @@ export interface Frame {
   ke: number
   /** Total (kinetic + potential) energy at this frame; never higher than in the previous frame unless points were added or removed. */
   energy?: number
+  /** Potential energy of the length terms, ½·k·(L - T)² summed over the curves. */
+  lengthEnergy?: number
+  /** Potential energy of the bend terms, summed over the curves. */
+  bendEnergy?: number
   /** Per-curve point polylines (fix points + interior points), in curve order. */
   curves: Vec2[][]
   /**
