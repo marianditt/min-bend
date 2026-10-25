@@ -34,6 +34,16 @@ describe('wizard', () => {
     expect(solve.disabled).toBe(false)
   })
 
+  it('lets a point follow a different point on its own curve, but not itself', () => {
+    render(<App />)
+    const follows = screen.getAllByLabelText('Follows') as HTMLSelectElement[]
+    expect(Array.from(follows[0].options).map((option) => option.value)).toEqual(['', 'p2'])
+    expect(Array.from(follows[1].options).map((option) => option.value)).toEqual(['', 'p1'])
+
+    fireEvent.change(follows[0], { target: { value: 'p2' } })
+    expect(follows[0].value).toBe('p2')
+  })
+
   it('recovers from a corrupt saved state', () => {
     localStorage.setItem('min-bend:state', '{"version":2,"setup":{"curves":"nope"}}')
     render(<App />)
