@@ -482,7 +482,8 @@ export function solve(
     apply(s)
     if (s === 0) for (const chain of chains) for (const v of chain.vel) { v[0] = 0; v[1] = 0 }
     maxPoints = Math.max(maxPoints, countPoints())
-    const countChanged = countPoints() !== pointsBefore
+    const countChanged =
+      countPoints() !== pointsBefore || chains.some((chain, ci) => chain.pts.length !== before[ci].pts.length)
 
     let ke = totalKineticEnergy(chains)
     const pe = totalPotentialEnergy(chains, constants)
